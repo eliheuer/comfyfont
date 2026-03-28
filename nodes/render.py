@@ -24,20 +24,14 @@ def _alpha_to_mask(img: Image.Image) -> torch.Tensor:
 
 
 def _resolve_font(font: str) -> str:
-    """
-    Resolve a font name or path to a usable TTF/OTF path.
-
-    Accepts:
-      - A font name from the ComfyFont library (e.g. "VirtuaGrotesk-Regular")
-      - An absolute path to a TTF/OTF file
-    """
-    from ..core import library as _lib
-    # Library font name?
-    tp = _lib.ttf_path(font)
-    if os.path.isfile(tp):
-        return tp
-    # Absolute path?
-    if os.path.isabs(font) and os.path.exists(font):
+    """Resolve a FONT value (file path) to a TTF/OTF path usable for rendering."""
+    if os.path.isdir(font):
+        ttf = os.path.splitext(font)[0] + ".ttf"
+        if not os.path.isfile(ttf):
+            from ..core.compile import compile_ufo_to_ttf
+            ttf = compile_ufo_to_ttf(font)
+        return ttf
+    if os.path.isfile(font):
         return font
     raise FileNotFoundError(f"Font not found: {font!r}")
 

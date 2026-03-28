@@ -2,16 +2,19 @@
 ComfyFont — font editing and rendering for ComfyUI.
 
 Nodes:
-  ComfyFontLoad       — load a font from the library (primary node)
+  ComfyFontLoad       — load a font from disk by file path (primary node)
   ComfyFontTextRender — FONT + text → IMAGE + MASK
   ComfyFontGlyphRender — FONT + glyph name → IMAGE + MASK
   ComfyFontComposite  — composite text over image
 
 Routes:
-  POST /comfyfont/import            — import TTF/OTF/UFO into library
-  GET  /comfyfont/library           — list fonts in library
-  GET  /comfyfont/glyph_map         — list glyphs in a font
-  GET  /comfyfont/ws                — WebSocket RPC (glyph editor)
+  POST /comfyfont/import   — upload a font; copies to fonts/ and converts to UFO
+  GET  /comfyfont/glyph_map — list glyphs in a font (?path=)
+  GET  /comfyfont/ws        — WebSocket RPC for the glyph editor (?path=)
+
+Font storage (comfyfont/fonts/):
+  MyFont.ttf   — copy of the original, used by rendering nodes
+  MyFont.ufo/  — converted at import time, used by the glyph editor
 """
 
 from __future__ import annotations
@@ -23,35 +26,41 @@ import os
 import aiohttp.web as web
 from server import PromptServer
 
-from .core import library as _lib
 from .nodes.load import ComfyFontLoadNode
 from .nodes.render import FontCompositeNode, GlyphRenderNode, TextRenderNode
 
 log = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Initialise library
-
-NODE_DIR = os.path.dirname(os.path.abspath(__file__))
-LIBRARY_DIR = os.path.join(NODE_DIR, "library")
-_lib.init(LIBRARY_DIR)
-
-# Auto-import any TTF/OTF sitting in the fonts/ drop folder
+NODE_DIR  = os.path.dirname(os.path.abspath(__file__))
 FONTS_DIR = os.path.join(NODE_DIR, "fonts")
 os.makedirs(FONTS_DIR, exist_ok=True)
 
-def _auto_import_drop_folder():
-    for fname in os.listdir(FONTS_DIR):
-        ext = os.path.splitext(fname)[1].lower()
-        if ext not in (".ttf", ".otf", ".woff", ".woff2"):
-            continue
-        try:
-            record = _lib.importFont(os.path.join(FONTS_DIR, fname))
-            log.info("Auto-imported %s → %s", fname, record["name"])
-        except Exception:
-            log.exception("Failed to auto-import %s", fname)
+# ---------------------------------------------------------------------------
+# Helpers
 
-_auto_import_drop_folder()
+def _sibling_ufo(font_path: str) -> str | None:
+    """Return the .ufo folder next to a TTF/OTF if it exists, else None."""
+    ext = os.path.splitext(font_path)[1].lower()
+    if ext in (".ttf", ".otf", ".woff", ".woff2"):
+        ufo = os.path.splitext(font_path)[0] + ".ufo"
+        if os.path.isdir(ufo):
+            return ufo
+    return None
+
+
+def _resolve_edit_path(font_path: str) -> str:
+    """For editing, prefer the sibling UFO over a compiled font."""
+    return _sibling_ufo(font_path) or font_path
+
+
+def _convert_ttf_to_ufo(ttf_path: str, ufo_path: str) -> None:
+    from fontTools.ttLib import TTFont
+    from .core.library import _ttf_to_ufo
+    tt = TTFont(ttf_path, lazy=False)
+    _ttf_to_ufo(tt, ufo_path)
+    tt.close()
+    log.info("Converted %s → %s", ttf_path, ufo_path)
+
 
 # ---------------------------------------------------------------------------
 # Routes
@@ -61,50 +70,60 @@ routes = PromptServer.instance.routes
 
 @routes.post("/comfyfont/import")
 async def _import_font(request: web.Request) -> web.Response:
-    """Receive a font file upload and import it into the library."""
+    """
+    Receive a font file upload.
+
+    - Copies the file into comfyfont/fonts/.
+    - If it is a compiled font (TTF/OTF/WOFF), also converts it to a UFO
+      alongside it so the glyph editor can make edits.
+    - Returns {"ok": true, "path": "<absolute path to the copied font>"}.
+    """
     try:
         reader = await request.multipart()
-        field = await reader.next()
+        field  = await reader.next()
         if field is None:
             return web.json_response({"error": "no file"}, status=400)
 
-        filename = field.filename or "upload.ttf"
-        ext = os.path.splitext(filename)[1].lower()
-        tmp_path = os.path.join(FONTS_DIR, "_upload" + ext)
+        filename  = field.filename or "upload.ttf"
+        ext       = os.path.splitext(filename)[1].lower()
+        dest_path = os.path.join(FONTS_DIR, filename)
 
-        with open(tmp_path, "wb") as f:
+        with open(dest_path, "wb") as f:
             while True:
                 chunk = await field.read_chunk()
                 if not chunk:
                     break
                 f.write(chunk)
 
-        loop = asyncio.get_event_loop()
-        record = await loop.run_in_executor(None, _lib.importFont, tmp_path)
-        os.remove(tmp_path)
+        loop = asyncio.get_running_loop()
 
-        return web.json_response({"ok": True, "name": record["name"]})
+        if ext in (".ttf", ".otf", ".woff", ".woff2"):
+            # Convert to UFO so the glyph editor can make edits
+            ufo_path = os.path.splitext(dest_path)[0] + ".ufo"
+            await loop.run_in_executor(None, _convert_ttf_to_ufo, dest_path, ufo_path)
+
+        elif ext == ".ufo" or os.path.isdir(dest_path):
+            # Compile to TTF so rendering nodes work
+            from .core.compile import compile_ufo_to_ttf
+            await loop.run_in_executor(None, compile_ufo_to_ttf, dest_path)
+
+        return web.json_response({"ok": True, "path": dest_path})
+
     except Exception as exc:
         log.exception("import error")
         return web.json_response({"error": str(exc)}, status=500)
 
 
-@routes.get("/comfyfont/library")
-async def _library(request: web.Request) -> web.Response:
-    return web.json_response(_lib.listFonts())
-
-
 @routes.get("/comfyfont/glyph_map")
 async def _glyph_map(request: web.Request) -> web.Response:
-    font = request.query.get("font", "")
-    if not font:
-        return web.json_response({"error": "font required"}, status=400)
+    font_path = request.query.get("path", "")
+    if not font_path:
+        return web.json_response({"error": "path required"}, status=400)
+    if not os.path.exists(font_path):
+        return web.json_response({"error": f"Font not found: {font_path!r}"}, status=404)
     try:
-        ufo_p = _lib.ufo_path(font)
-        ttf_p = _lib.ttf_path(font)
-        font_path = ufo_p if os.path.isdir(ufo_p) else ttf_p
         from .core.server import getFontHandler
-        handler = getFontHandler(font_path)
+        handler = getFontHandler(_resolve_edit_path(font_path))
         return web.json_response(await handler.getGlyphMap())
     except Exception as exc:
         log.exception("glyph_map error")
@@ -113,15 +132,14 @@ async def _glyph_map(request: web.Request) -> web.Response:
 
 @routes.get("/comfyfont/ws")
 async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
-    font = request.query.get("font", "")
-    if not font:
-        raise web.HTTPBadRequest(reason="font required")
-
-    ufo_p = _lib.ufo_path(font)
-    ttf_p = _lib.ttf_path(font)
-    font_path = ufo_p if os.path.isdir(ufo_p) else ttf_p
+    font_path = request.query.get("path", "")
+    if not font_path:
+        raise web.HTTPBadRequest(reason="path required")
     if not os.path.exists(font_path):
-        raise web.HTTPNotFound(reason=f"Font {font!r} not in library")
+        raise web.HTTPNotFound(reason=f"Font not found: {font_path!r}")
+
+    # Use UFO sibling for editing when available
+    edit_path = _resolve_edit_path(font_path)
 
     ws = web.WebSocketResponse()
     await ws.prepare(request)
@@ -129,8 +147,8 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
     from .core.server import getFontHandler
     from .core.remote import RemoteObjectConnection
 
-    handler = getFontHandler(font_path)
-    conn = RemoteObjectConnection(ws, handler)
+    handler = getFontHandler(edit_path)
+    conn    = RemoteObjectConnection(ws, handler)
     await conn.run()
     return ws
 

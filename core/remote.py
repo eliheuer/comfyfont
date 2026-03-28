@@ -109,7 +109,7 @@ class RemoteObjectConnection:
     async def callRemote(self, methodName: str, *args: Any) -> Any:
         """Call a method on the remote (JS) client and await the response."""
         call_id = next(self._serverCallId)
-        future: asyncio.Future = asyncio.get_event_loop().create_future()
+        future: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pendingServerCalls[call_id] = future
         payload = {
             "server-call-id": call_id,

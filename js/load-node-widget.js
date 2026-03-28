@@ -85,15 +85,15 @@ function specimenLayout(filteredLines, glyphData, upm, ascender, descender, avai
 // Specimen data fetch — opens FontController, detects script, loads glyph paths
 
 async function refreshSpecimen(node) {
-  const fontWidget = node.widgets?.find((w) => w.name === "font");
-  const fontName   = fontWidget?.value;
-  if (!fontName || fontName.startsWith("(")) {
+  const fontWidget = node.widgets?.find((w) => w.name === "font_path");
+  const fontPath   = fontWidget?.value?.trim();
+  if (!fontPath) {
     node._specimenData = null;
     return;
   }
 
   try {
-    const fc = await getFontController(fontName);
+    const fc = await getFontController(fontPath);
     const [info, glyphMap] = await Promise.all([fc.getFontInfo(), fc.getGlyphMap()]);
 
     // Build codepoint → glyph-name reverse map.
@@ -143,9 +143,9 @@ async function refreshSpecimen(node) {
 // Font import helper
 
 async function importFont(node) {
-  const input   = document.createElement("input");
-  input.type    = "file";
-  input.accept  = ".ttf,.otf,.woff,.woff2,.ufo";
+  const input  = document.createElement("input");
+  input.type   = "file";
+  input.accept = ".ttf,.otf,.woff,.woff2,.ufo";
 
   input.onchange = async () => {
     const file = input.files[0];
@@ -155,7 +155,7 @@ async function importFont(node) {
     form.append("file", file, file.name);
 
     const statusWidget = node.widgets?.find((w) => w.name === "_status");
-    if (statusWidget) statusWidget.value = `Importing ${file.name}…`;
+    if (statusWidget) statusWidget.value = `Uploading ${file.name}…`;
     node.setDirtyCanvas(true, false);
 
     try {
@@ -163,17 +163,10 @@ async function importFont(node) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
 
-      const fontName   = data.name;
-      const fontWidget = node.widgets?.find((w) => w.name === "font");
-      if (fontWidget) {
-        if (!fontWidget.options?.values?.includes(fontName)) {
-          fontWidget.options          = fontWidget.options || {};
-          fontWidget.options.values   = [...(fontWidget.options.values || []), fontName];
-        }
-        fontWidget.value = fontName;
-      }
+      const fontWidget = node.widgets?.find((w) => w.name === "font_path");
+      if (fontWidget) fontWidget.value = data.path;
 
-      if (statusWidget) statusWidget.value = `✓ Imported: ${fontName}`;
+      if (statusWidget) statusWidget.value = `✓ ${file.name}`;
       await refreshSpecimen(node);
 
     } catch (err) {
@@ -213,8 +206,8 @@ app.registerExtension({
 
       this._specimenData = null;
 
-      // Refresh specimen when font selection changes
-      const fontWidget = this.widgets?.find((w) => w.name === "font");
+      // Refresh specimen when font path changes
+      const fontWidget = this.widgets?.find((w) => w.name === "font_path");
       if (fontWidget) {
         const origCb = fontWidget.callback;
         fontWidget.callback = (...args) => {
@@ -226,8 +219,8 @@ app.registerExtension({
       // Buttons
       this.addWidget("button", "Import Font…", null, () => importFont(this));
       this.addWidget("button", "Edit Font",    null, () => {
-        const fname = this.widgets?.find((w) => w.name === "font")?.value;
-        if (fname && !fname.startsWith("(")) openEditor(fname);
+        const fname = this.widgets?.find((w) => w.name === "font_path")?.value?.trim();
+        if (fname) openEditor(fname);
       });
 
       // Status label (read-only)
@@ -289,7 +282,7 @@ app.registerExtension({
     };
   },
 
-  // Load specimen once node is placed on canvas
+  // Refresh specimen once node is placed on canvas (path may already be set)
   async nodeCreated(node) {
     if (node.comfyClass !== "ComfyFontLoad") return;
     await refreshSpecimen(node);

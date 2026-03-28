@@ -3,3 +3,4 @@ ufoLib2>=0.16.0
 freetype-py>=2.4.0
 cattrs>=23.1.0
 Pillow>=10.0.0
+fontmake>=3.0.0

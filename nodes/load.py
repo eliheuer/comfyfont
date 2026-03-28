@@ -1,33 +1,28 @@
 """
 ComfyFontLoadNode — the primary font node.
 
-Outputs a FONT type (font name string) that rendering nodes consume.
+Outputs a FONT type (absolute file path) that rendering nodes consume.
 """
 
 from __future__ import annotations
 
-from ..core import library
+import os
 
 
 class ComfyFontLoadNode:
     """
-    Load a font from the ComfyFont library.
+    Load a font by file path.
 
-    Drop a TTF/OTF into comfyfont/fonts/ and click "Import" in the node,
-    or use the /comfyfont/import API. The font is stored as an editable
-    UFO source file in comfyfont/library/ alongside a compiled TTF for rendering.
+    Point this at any TTF, OTF, WOFF, WOFF2, or UFO on disk.
+    Use the "Import Font…" button in the node to browse and copy a file
+    into the local fonts/ folder, or type/paste an absolute path directly.
     """
 
     @classmethod
     def INPUT_TYPES(cls):
-        fonts = library.fontNames()
         return {
             "required": {
-                "font": (fonts if fonts else ["(no fonts — import one)"],),
-                "specimen_text": (
-                    "STRING",
-                    {"default": "AaBbCc 123", "multiline": False},
-                ),
+                "font_path": ("STRING", {"default": ""}),
             }
         }
 
@@ -36,18 +31,17 @@ class ComfyFontLoadNode:
     FUNCTION = "load"
     CATEGORY = "ComfyFont"
 
-    # Always re-execute so the output reflects any library changes.
     @classmethod
-    def IS_CHANGED(cls, **kwargs):
-        return float("nan")
+    def IS_CHANGED(cls, font_path: str = "", **kwargs):
+        try:
+            return os.path.getmtime(font_path.strip())
+        except OSError:
+            return ""
 
-    def load(self, font: str, specimen_text: str):
-        # Validate the font exists
-        import os
-        if not (os.path.isdir(library.ufo_path(font)) or
-                os.path.isfile(library.ttf_path(font))):
-            raise FileNotFoundError(
-                f"Font {font!r} not found in library. "
-                "Import it via the node's Import button."
-            )
-        return (font,)
+    def load(self, font_path: str):
+        font_path = font_path.strip()
+        if not font_path:
+            raise ValueError("No font path specified.")
+        if not os.path.exists(font_path):
+            raise FileNotFoundError(f"Font not found: {font_path!r}")
+        return (font_path,)

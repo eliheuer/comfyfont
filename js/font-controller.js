@@ -98,11 +98,11 @@ class LRUCache {
 
 export class FontController {
   /**
-   * @param {string} fontName  – filename as registered in comfyfont_fonts folder
+   * @param {string} fontPath  – absolute path to a TTF/OTF/UFO on the server
    */
-  constructor(fontName) {
-    this.fontName = fontName;
-    const wsPath = `/comfyfont/ws?font=${encodeURIComponent(fontName)}`;
+  constructor(fontPath) {
+    this.fontPath = fontPath;
+    const wsPath = `/comfyfont/ws?path=${encodeURIComponent(fontPath)}`;
     this._remote = new RemoteObject(wsPath);
     this._backend = getRemoteProxy(this._remote);
     this._glyphCache = new LRUCache(GLYPH_CACHE_SIZE);
@@ -215,11 +215,11 @@ export class FontController {
 
 const _controllers = new Map();
 
-export async function getFontController(fontName) {
-  if (!_controllers.has(fontName)) {
-    const ctrl = new FontController(fontName);
+export async function getFontController(fontPath) {
+  if (!_controllers.has(fontPath)) {
+    const ctrl = new FontController(fontPath);
     await ctrl.connect();
-    _controllers.set(fontName, ctrl);
+    _controllers.set(fontPath, ctrl);
   }
-  return _controllers.get(fontName);
+  return _controllers.get(fontPath);
 }

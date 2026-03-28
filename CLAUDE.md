@@ -4,7 +4,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-ComfyFont is a ComfyUI custom node extension that embeds a font editor. It provides nodes for loading/rendering fonts and a full-screen WebSocket-based glyph editor overlay. The architecture mirrors [Fontra](https://github.com/fontra/fontra) closely.
+ComfyFont is a ComfyUI custom node that brings font editing and rendering into an AI image generation workflow. It has two distinct parts:
+
+**Node graph side** — standard ComfyUI nodes that treat fonts as a first-class data type:
+- `Load Font` — picks a font from the library, shows a live vector specimen preview in the node
+- `Text Render` / `Glyph Render` — rasterizes text or individual glyphs to IMAGE + MASK tensors that plug into any normal ComfyUI workflow (inpainting, ControlNet, compositing, etc.)
+
+**Font editor** — a full-screen WebSocket-driven glyph editor (opened via "Edit Font" button). Reads and writes UFO source files directly, with a bezier editing UI that mirrors [Fontra](https://github.com/fontra/fontra)'s architecture.
+
+The library stores every font as both a **UFO** (editable vector source, one `.glif` per glyph) and a compiled **TTF** (for fast PIL rendering in nodes).
+
+### Future direction: AI type design
+
+The UFO format is the key enabling layer. Each glyph is a list of bezier contours — coordinates and point types — a compact structured representation that models can operate on directly. Planned AI integration directions:
+
+- **Glyph completion** — draw a few glyphs, have a model infer the rest of the alphabet in the same style; outputs coordinates written back to the UFO via the existing RPC
+- **Interpolation / variation** — given two masters, generate intermediate weights or widths (the variable font infrastructure is already in place)
+- **Image → outlines** — generate a glyph image with diffusion, auto-trace to bezier paths, import into UFO
+- **Style transfer** — apply the stylistic features of one font to the metrics/rhythm of another
+
+The workflow would be: **Load Font → AI node → modified FONT → Render**. The AI node would communicate with the same FontHandler backend the editor uses. The hard part is training models that understand glyph coordinate sequences well enough to produce coherent letterforms.
 
 ## Setup & Development
 
