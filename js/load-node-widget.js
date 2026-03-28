@@ -1,10 +1,13 @@
 /**
  * load-node-widget.js
  *
- * Customises the ComfyFontLoad node to look and behave like Load Image:
+ * Customises the ComfyFontLoad node:
  *  - Type specimen rendered directly to canvas via Path2D
  *  - "Import Font…" button → file picker → uploads to /comfyfont/import
  *  - "Edit Font" button → opens the full-screen editor overlay
+ *
+ * The `font` input is a standard ComfyUI COMBO dropdown; this extension adds
+ * the specimen preview and action buttons without replacing the dropdown itself.
  */
 
 import { app } from "../../scripts/app.js";
@@ -27,10 +30,7 @@ const LATIN_SPECIMEN = [
 // Returns an array of draw commands: [{path2d, tx, ty, s}]
 
 function specimenLayout(filteredLines, glyphData, upm, ascender, descender, availW, availH) {
-  const PAD = 10;
-  const inner_w = availW - 2 * PAD;
-  const inner_h = availH - 2 * PAD;
-  if (inner_w < 10 || inner_h < 10) return [];
+  if (availW < 20 || availH < 20) return [];
 
   const line_h = ascender - descender;  // font units
   const gap    = line_h * 0.06;
@@ -44,8 +44,8 @@ function specimenLayout(filteredLines, glyphData, upm, ascender, descender, avai
     );
     const maxW   = Math.max(...widths, 1);
     const totalH = n * line_h + (n - 1) * gap;
-    const scale  = Math.min(inner_w / maxW, inner_h / totalH);
-    if (ascender * scale >= 18) break;   // ascender ≈ cap height, good proxy
+    const scale  = Math.min(availW / maxW, availH / totalH);
+    if (ascender * scale >= 18) break;
     lines = lines.slice(0, -1);
   }
 
@@ -55,18 +55,15 @@ function specimenLayout(filteredLines, glyphData, upm, ascender, descender, avai
   );
   const maxW   = Math.max(...widths, 1);
   const totalH = n * line_h + (n - 1) * gap;
-  const scale  = Math.min(inner_w / maxW, inner_h / totalH);
+  const scale  = Math.min(availW / maxW, availH / totalH);
 
-  // Vertical centering
-  const v_offset = PAD + (inner_h - totalH * scale) / 2;
+  const blockTop = (availH - totalH * scale) / 2;
 
   const cmds = [];
   for (let i = 0; i < lines.length; i++) {
     const chars      = lines[i];
-    const baseline_y = v_offset + (i * (line_h + gap) + ascender) * scale;
-
-    // Horizontal centering per line
-    const x_start = PAD + (inner_w - widths[i] * scale) / 2;
+    const baseline_y = blockTop + (i * (line_h + gap) + ascender) * scale;
+    const x_start    = (availW - widths[i] * scale) / 2;
 
     let x_ufo = 0;
     for (const ch of chars) {
@@ -82,33 +79,29 @@ function specimenLayout(filteredLines, glyphData, upm, ascender, descender, avai
 }
 
 // ---------------------------------------------------------------------------
-// Specimen data fetch — opens FontController, detects script, loads glyph paths
+// Specimen data fetch
 
 async function refreshSpecimen(node) {
-  const fontWidget = node.widgets?.find((w) => w.name === "font_path");
-  const fontPath   = fontWidget?.value?.trim();
-  if (!fontPath) {
+  const fontWidget = node.widgets?.find((w) => w.name === "font");
+  const fontName   = fontWidget?.value?.trim();
+  if (!fontName || fontName.startsWith("(")) {
     node._specimenData = null;
     return;
   }
 
   try {
-    const fc = await getFontController(fontPath);
+    const fc = await getFontController(fontName);
     const [info, glyphMap] = await Promise.all([fc.getFontInfo(), fc.getGlyphMap()]);
 
-    // Build codepoint → glyph-name reverse map.
-    // glyphMap format: { glyphName: [codepoint, ...] }
     const cpToGlyph = new Map();
     for (const [name, codepoints] of Object.entries(glyphMap)) {
       for (const cp of codepoints) cpToGlyph.set(cp, name);
     }
 
-    // Filter each Latin line to chars present in this font
     const filteredLines = LATIN_SPECIMEN
       .map((line) => [...line].filter((ch) => cpToGlyph.has(ch.codePointAt(0))))
       .filter((line) => line.length > 0);
 
-    // Fetch Path2D + advance for every unique character (parallelised, LRU-cached)
     const uniqueChars = [...new Set(filteredLines.flat())];
     const glyphData   = {};
 
@@ -120,7 +113,7 @@ async function refreshSpecimen(node) {
         const layer = glyph?.defaultLayer;
         if (!layer) return;
         glyphData[ch] = {
-          path2d:   layer.flattenedPath2d,   // VarPackedPath → Path2D (cached)
+          path2d:   layer.flattenedPath2d,
           xAdvance: layer.xAdvance ?? 0,
         };
       })
@@ -155,7 +148,7 @@ async function importFont(node) {
     form.append("file", file, file.name);
 
     const statusWidget = node.widgets?.find((w) => w.name === "_status");
-    if (statusWidget) statusWidget.value = `Uploading ${file.name}…`;
+    if (statusWidget) statusWidget.value = `Uploading…`;
     node.setDirtyCanvas(true, false);
 
     try {
@@ -163,10 +156,17 @@ async function importFont(node) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
 
-      const fontWidget = node.widgets?.find((w) => w.name === "font_path");
-      if (fontWidget) fontWidget.value = data.path;
+      // Add the new font to the COMBO and select it
+      const fontWidget = node.widgets?.find((w) => w.name === "font");
+      if (fontWidget) {
+        if (!fontWidget.options.values.includes(data.name)) {
+          fontWidget.options.values.push(data.name);
+          fontWidget.options.values.sort();
+        }
+        fontWidget.value = data.name;
+      }
 
-      if (statusWidget) statusWidget.value = `✓ ${file.name}`;
+      if (statusWidget) statusWidget.value = "";
       await refreshSpecimen(node);
 
     } catch (err) {
@@ -206,8 +206,8 @@ app.registerExtension({
 
       this._specimenData = null;
 
-      // Refresh specimen when font path changes
-      const fontWidget = this.widgets?.find((w) => w.name === "font_path");
+      // Refresh specimen when the COMBO selection changes
+      const fontWidget = this.widgets?.find((w) => w.name === "font");
       if (fontWidget) {
         const origCb = fontWidget.callback;
         fontWidget.callback = (...args) => {
@@ -219,19 +219,18 @@ app.registerExtension({
       // Buttons
       this.addWidget("button", "Import Font…", null, () => importFont(this));
       this.addWidget("button", "Edit Font",    null, () => {
-        const fname = this.widgets?.find((w) => w.name === "font_path")?.value?.trim();
-        if (fname) openEditor(fname);
+        const name = this.widgets?.find((w) => w.name === "font")?.value?.trim();
+        if (name && !name.startsWith("(")) openEditor(name);
       });
 
-      // Status label (read-only)
-      const statusW     = this.addWidget("text", "_status", "", () => {});
-      statusW.disabled  = true;
+      // Status label — shows transient messages (upload errors, etc.)
+      const statusW    = this.addWidget("text", "_status", "", () => {});
+      statusW.disabled = true;
 
       this.size[1] += SPECIMEN_MIN_H + 16;
     };
 
     // ---- onDrawBackground ----
-    // Layout is computed here (sync, cheap) so it always matches current node size.
     nodeType.prototype.onDrawBackground = function (ctx) {
       const pad    = 6;
       const imgY   = specimenY(this);
@@ -244,25 +243,22 @@ app.registerExtension({
       ctx.roundRect(pad, imgY, availW, availH, 4);
       ctx.clip();
 
-      // Background
       ctx.fillStyle = "#1c1c1c";
       ctx.fill();
 
       if (this._specimenData) {
-        const { ascender, descender, filteredLines, glyphData } = this._specimenData;
-        const upm  = this._specimenData.upm;
+        const { ascender, descender, filteredLines, glyphData, upm } = this._specimenData;
         const cmds = specimenLayout(
           filteredLines, glyphData, upm, ascender, descender, availW, availH
         );
 
-        // Shift origin to clip-rect top-left so layout coords (0→availW, 0→availH) land correctly
         ctx.translate(pad, imgY);
 
         ctx.fillStyle = "#dcdcdc";
         for (const { path2d, tx, ty, s } of cmds) {
           ctx.save();
           ctx.translate(tx, ty);
-          ctx.scale(s, -s);       // y-flip: font coords are y-up, canvas is y-down
+          ctx.scale(s, -s);
           ctx.fill(path2d, "nonzero");
           ctx.restore();
         }
@@ -277,12 +273,10 @@ app.registerExtension({
       origResize?.apply(this, arguments);
       const minH = specimenY(this) + SPECIMEN_MIN_H + 6;
       if (size[1] < minH) size[1] = minH;
-      // No re-fetch needed: specimenLayout() in onDrawBackground recomputes from
-      // node.size on every frame, so resize is automatically reflected.
     };
   },
 
-  // Refresh specimen once node is placed on canvas (path may already be set)
+  // Refresh specimen once node is placed on canvas
   async nodeCreated(node) {
     if (node.comfyClass !== "ComfyFontLoad") return;
     await refreshSpecimen(node);

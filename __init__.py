@@ -2,19 +2,20 @@
 ComfyFont — font editing and rendering for ComfyUI.
 
 Nodes:
-  ComfyFontLoad       — load a font from disk by file path (primary node)
+  ComfyFontLoad       — pick a font from the workspace (COMBO dropdown)
   ComfyFontTextRender — FONT + text → IMAGE + MASK
   ComfyFontGlyphRender — FONT + glyph name → IMAGE + MASK
   ComfyFontComposite  — composite text over image
 
 Routes:
-  POST /comfyfont/import   — upload a font; copies to fonts/ and converts to UFO
-  GET  /comfyfont/glyph_map — list glyphs in a font (?path=)
-  GET  /comfyfont/ws        — WebSocket RPC for the glyph editor (?path=)
+  POST /comfyfont/import    — upload a font; copies to workspace, converts TTF↔UFO
+  GET  /comfyfont/fonts     — JSON list of font names in the workspace
+  GET  /comfyfont/glyph_map — list glyphs in a font (?name= or ?path=)
+  GET  /comfyfont/ws        — WebSocket RPC for the glyph editor (?name= or ?path=)
 
-Font storage (comfyfont/fonts/):
-  MyFont.ttf   — copy of the original, used by rendering nodes
-  MyFont.ufo/  — converted at import time, used by the glyph editor
+Font workspace (comfyfont/fonts/):
+  MyFont.ttf   — compiled font, used by rendering nodes
+  MyFont.ufo/  — editable source, used by the glyph editor
 """
 
 from __future__ import annotations
@@ -34,6 +35,14 @@ log = logging.getLogger(__name__)
 NODE_DIR  = os.path.dirname(os.path.abspath(__file__))
 FONTS_DIR = os.path.join(NODE_DIR, "fonts")
 os.makedirs(FONTS_DIR, exist_ok=True)
+
+# Register the workspace with ComfyUI's folder_paths so other nodes and tools
+# can discover ComfyFont's managed files through the standard API.
+try:
+    import folder_paths
+    folder_paths.add_search_path("comfyfont", FONTS_DIR)
+except Exception:
+    pass  # older ComfyUI versions may not support add_search_path
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -62,6 +71,19 @@ def _convert_ttf_to_ufo(ttf_path: str, ufo_path: str) -> None:
     log.info("Converted %s → %s", ttf_path, ufo_path)
 
 
+def _resolve_font_param(request: web.Request) -> str:
+    """
+    Resolve a font from request query params.
+
+    Accepts ?name=<filename> (relative to FONTS_DIR) or ?path=<absolute path>.
+    Returns the absolute path, or empty string if neither is provided.
+    """
+    name = request.query.get("name", "")
+    if name:
+        return os.path.join(FONTS_DIR, name)
+    return request.query.get("path", "")
+
+
 # ---------------------------------------------------------------------------
 # Routes
 
@@ -76,7 +98,7 @@ async def _import_font(request: web.Request) -> web.Response:
     - Copies the file into comfyfont/fonts/.
     - If it is a compiled font (TTF/OTF/WOFF), also converts it to a UFO
       alongside it so the glyph editor can make edits.
-    - Returns {"ok": true, "path": "<absolute path to the copied font>"}.
+    - Returns {"ok": true, "name": "<filename>", "path": "<absolute path>"}.
     """
     try:
         reader = await request.multipart()
@@ -98,27 +120,32 @@ async def _import_font(request: web.Request) -> web.Response:
         loop = asyncio.get_running_loop()
 
         if ext in (".ttf", ".otf", ".woff", ".woff2"):
-            # Convert to UFO so the glyph editor can make edits
             ufo_path = os.path.splitext(dest_path)[0] + ".ufo"
             await loop.run_in_executor(None, _convert_ttf_to_ufo, dest_path, ufo_path)
 
         elif ext == ".ufo" or os.path.isdir(dest_path):
-            # Compile to TTF so rendering nodes work
             from .core.compile import compile_ufo_to_ttf
             await loop.run_in_executor(None, compile_ufo_to_ttf, dest_path)
 
-        return web.json_response({"ok": True, "path": dest_path})
+        return web.json_response({"ok": True, "name": filename, "path": dest_path})
 
     except Exception as exc:
         log.exception("import error")
         return web.json_response({"error": str(exc)}, status=500)
 
 
+@routes.get("/comfyfont/fonts")
+async def _list_fonts(request: web.Request) -> web.Response:
+    """Return the list of font names currently in the workspace."""
+    from .nodes.load import get_font_list
+    return web.json_response(get_font_list())
+
+
 @routes.get("/comfyfont/glyph_map")
 async def _glyph_map(request: web.Request) -> web.Response:
-    font_path = request.query.get("path", "")
+    font_path = _resolve_font_param(request)
     if not font_path:
-        return web.json_response({"error": "path required"}, status=400)
+        return web.json_response({"error": "name or path required"}, status=400)
     if not os.path.exists(font_path):
         return web.json_response({"error": f"Font not found: {font_path!r}"}, status=404)
     try:
@@ -132,9 +159,9 @@ async def _glyph_map(request: web.Request) -> web.Response:
 
 @routes.get("/comfyfont/ws")
 async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
-    font_path = request.query.get("path", "")
+    font_path = _resolve_font_param(request)
     if not font_path:
-        raise web.HTTPBadRequest(reason="path required")
+        raise web.HTTPBadRequest(reason="name or path required")
     if not os.path.exists(font_path):
         raise web.HTTPNotFound(reason=f"Font not found: {font_path!r}")
 
