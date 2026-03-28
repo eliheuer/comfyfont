@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# Font files — drop folder and compiled library (never commit font binaries or sources)
+fonts/
+library/
+
+# OS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
