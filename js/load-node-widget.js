@@ -2,13 +2,9 @@
  * load-node-widget.js
  *
  * Customises the ComfyFontLoad node to look and behave like Load Image:
- *  - Type specimen rendered directly to canvas via Path2D (Fontra-style)
+ *  - Type specimen rendered directly to canvas via Path2D
  *  - "Import Font…" button → file picker → uploads to /comfyfont/import
  *  - "Edit Font" button → opens the full-screen editor overlay
- *
- * The specimen is drawn entirely in JS using the same FontController /
- * Path2D pipeline as the glyph grid in the editor — no image intermediary,
- * no SVG, inherently correct aspect ratio at any canvas resolution.
  */
 
 import { app } from "../../scripts/app.js";
@@ -16,18 +12,13 @@ import { openEditor } from "./editor-overlay.js";
 import { getFontController } from "./font-controller.js";
 
 // ---------------------------------------------------------------------------
-// Latin specimen lines — paired Aa Bb style, digits last.
-// Characters missing from the font are silently skipped.
-// Lines that become empty after filtering are dropped.
+// Latin specimen lines
 
 const LATIN_SPECIMEN = [
-  "AaBbCcDd",
-  "EeFfGgHh",
-  "IiJjKkLl",
-  "MmNnOoPp",
-  "QqRrSsTt",
-  "UuVvWwXx",
-  "YyZz",
+  "ABCDEFGHIJKLM",
+  "NOPQRSTUVWXYZ",
+  "abcdefghijklm",
+  "nopqrstuvwxyz",
   "0123456789",
 ];
 
@@ -42,7 +33,7 @@ function specimenLayout(filteredLines, glyphData, upm, ascender, descender, avai
   if (inner_w < 10 || inner_h < 10) return [];
 
   const line_h = ascender - descender;  // font units
-  const gap    = line_h * 0.15;
+  const gap    = line_h * 0.06;
 
   // Drop lines from the end until cap height is at least 18px
   let lines = filteredLines;
