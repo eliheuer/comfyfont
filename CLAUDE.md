@@ -85,22 +85,19 @@ ComfyUI nodes declare inputs/outputs via class-level attributes that ComfyUI rea
 - `FUNCTION` — method ComfyUI calls to execute
 - `IS_CHANGED` — return value ComfyUI compares to decide whether to re-execute (return mtime for file-based cache invalidation)
 
-**`ComfyFontLoadNode`** (`nodes/load.py`)
+**`ComfyFontNode`** (`nodes/comfyfont.py`) — display name: "ComfyFont"
 - Input: `font` (COMBO of workspace filenames)
-- Output: `font` (FONT — absolute path to the workspace TTF/designspace)
-- `get_font_list()` is exported and also used by `GET /comfyfont/fonts`
+- Output: `font` (FONT — absolute workspace path)
+- `get_font_list()` lives here and is re-exported from `nodes/load.py` for `GET /comfyfont/fonts`
+- Purely a font selector; Import Font… and Edit Font buttons added by JS extension
 
-**`TextRenderNode`** (`nodes/render.py`)
-- Inputs: `font` (FONT), `text` (STRING), `font_size` (INT), `canvas_width`, `canvas_height`, `x`, `y` (-1 = auto-center), `color` (STRING hex, optional)
-- Outputs: `image` (IMAGE `[1, H, W, 3]`), `mask` (MASK `[1, H, W]`)
-
-**`GlyphRenderNode`** (`nodes/render.py`)
-- Inputs: `font` (FONT), `glyph_name` (STRING — name, single char, or `U+XXXX`), `canvas_width`, `canvas_height`, `padding`, `even_odd`
-- Outputs: `image` (IMAGE), `mask` (MASK)
-
-**`FontCompositeNode`** (`nodes/render.py`)
-- Inputs: `background` (IMAGE), `overlay` (IMAGE), `mask` (MASK), `opacity` (FLOAT)
+**`DrawBotNode`** (`nodes/drawbot.py`) — display name: "DrawBot"
+- Inputs: `font` (FONT), `preset` (COMBO: specimen/waterfall/glyph/pangram/custom), `canvas_width`, `canvas_height`; optional: `input_text` (STRING), `custom_script` (STRING, multiline)
 - Output: `image` (IMAGE)
+- Built-in presets are DrawBot Python scripts stored in `nodes/drawbot.PRESETS`
+- `custom_script` accepts a wire from a Text node (right-click → Convert to input) or inline editing
+- Scripts run via `exec()` in a namespace with all drawbot-skia functions + `font_path`, `WIDTH`, `HEIGHT`, `input_text` pre-injected
+- Uses drawbot-skia (cross-platform Skia-backed DrawBot); does not require the macOS DrawBot.app
 
 **Planned nodes:**
 - `ForkFontNode` — FONT → FONT: deep-copies the workspace entry to a new name, enabling parallel AI experimentation

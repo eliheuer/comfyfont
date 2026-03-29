@@ -45,76 +45,71 @@ For variable fonts, the workspace will contain a `.designspace` file alongside m
 
 ## Nodes
 
-### Load Font (`ComfyFont > Load Font`)
+### ComfyFont (`ComfyFont > ComfyFont`)
 
-The starting node. Selects a font from the workspace and outputs it as a `FONT` value that all other ComfyFont nodes accept.
-
-**Output:** `font` (FONT)
+The primary node. Selects a font and exposes it for the rest of the workflow.
 
 **Controls:**
 - **Font dropdown** — lists all fonts currently in the workspace
-- **Import Font…** — opens a file picker; imports the selected file into the workspace (copies it and creates the TTF/UFO pair)
-- **Edit Font** — opens the full-screen font editor for the selected font
+- **Import Font…** — opens a file picker; copies the font into the workspace and creates the TTF/UFO pair
+- **Edit Font** — opens the full-screen glyph editor
 
-The node shows a live **type specimen preview** of the selected font, rendered from the actual vector outlines.
+**Output:** `font` (FONT) — wire this to Render Font Specimen or any AI/Fork node.
+
+The node canvas shows a live **vector specimen preview** of the selected font.
 
 ---
 
-### Text Render (`ComfyFont/Render > Text Render`)
+### DrawBot (`ComfyFont > DrawBot`)
 
-Renders a string of text to an image using a loaded font.
+
+
+Renders a type specimen using [drawbot-skia](https://github.com/typemytype/drawbot-skia) — the cross-platform Python implementation of [DrawBot](https://www.drawbot.com/), the scripting tool type designers use for specimen generation.
 
 **Inputs:**
 | Input | Type | Description |
 |-------|------|-------------|
-| `font` | FONT | Font from Load Font |
-| `text` | STRING | Text to render |
-| `font_size` | INT | Size in pixels (6–1024) |
-| `canvas_width` | INT | Output image width (64–4096) |
-| `canvas_height` | INT | Output image height (64–4096) |
-| `x` | INT | X position; `-1` = auto-center |
-| `y` | INT | Y position; `-1` = auto-center |
-| `color` | STRING | Hex color, e.g. `#FFFFFF` (optional, default white) |
+| `font` | FONT | Font wire from the Font node |
+| `preset` | COMBO | Built-in script to run (see below) |
+| `canvas_width` | INT | Output width in pixels (64–4096) |
+| `canvas_height` | INT | Output height in pixels (64–4096) |
+| `input_text` | STRING | Text passed into scripts as `input_text` — used by waterfall, glyph, and pangram presets (optional) |
+| `custom_script` | STRING | DrawBot Python script — only used when preset is `custom`; right-click → "Convert to input" to wire from a Text node (optional) |
 
-**Outputs:** `image` (IMAGE), `mask` (MASK)
-
-The `mask` is the alpha channel of the rendered text. Use it with `SetLatentNoiseMask`, `MaskToImage`, or any compositing node to control where the text influences generation.
-
----
-
-### Glyph Render (`ComfyFont/Render > Glyph Render`)
-
-Renders a single glyph at high quality using FreeType vector rasterisation.
-
-**Inputs:**
-| Input | Type | Description |
-|-------|------|-------------|
-| `font` | FONT | Font from Load Font |
-| `glyph_name` | STRING | Glyph name (`A`), single character (`A`), or unicode (`U+0041`) |
-| `canvas_width` | INT | Output width (64–4096) |
-| `canvas_height` | INT | Output height (64–4096) |
-| `padding` | INT | Margin around the glyph in pixels (default 32) |
-| `even_odd` | BOOLEAN | Fill rule: off = non-zero (default), on = even-odd |
-
-**Outputs:** `image` (IMAGE), `mask` (MASK)
-
-The glyph is auto-fitted to fill the canvas (minus padding). Use `padding` to control how close to the edges it renders.
-
----
-
-### Font Composite (`ComfyFont/Render > Font Composite`)
-
-Composites a text or glyph image over a background image using its mask.
-
-**Inputs:**
-| Input | Type | Description |
-|-------|------|-------------|
-| `background` | IMAGE | Background image |
-| `overlay` | IMAGE | Text/glyph image from a render node |
-| `mask` | MASK | Mask from the same render node |
-| `opacity` | FLOAT | Blend opacity 0.0–1.0 |
+**Presets:**
+| Preset | Description |
+|--------|-------------|
+| `specimen` | A–Z uppercase, a–z lowercase, 0–9 rows — auto-fitted to canvas |
+| `waterfall` | Same text at cascading sizes (96pt down to 12pt) |
+| `glyph` | Single large character centred on canvas (set `input_text` to change the glyph) |
+| `pangram` | Body text in a text box (defaults to "The quick brown fox…") |
+| `custom` | Run your own DrawBot script from `custom_script` |
 
 **Output:** `image` (IMAGE)
+
+**Writing custom scripts:**
+
+Scripts have access to all standard DrawBot functions (`font()`, `text()`, `textBox()`, `fill()`, `rect()`, etc.) plus these injected variables:
+
+```python
+font_path   # absolute path to the loaded font
+WIDTH       # canvas width
+HEIGHT      # canvas height
+input_text  # value from the input_text field
+```
+
+Each script should start with `newPage(WIDTH, HEIGHT)`. Example:
+
+```python
+newPage(WIDTH, HEIGHT)
+fill(0.05)
+rect(0, 0, WIDTH, HEIGHT)
+fill(1)
+font(font_path, 120)
+text("Aa", (WIDTH / 2, HEIGHT * 0.25), align="center")
+```
+
+> drawbot-skia is the Python library — you do not need the macOS DrawBot.app installed. Scripts written for DrawBot.app are largely compatible.
 
 ---
 
@@ -168,14 +163,16 @@ When you import a compiled font (TTF/OTF/WOFF), ComfyFont automatically converts
 ### Render text over a generated image
 
 ```
-[Load Font] → [Text Render: "Hello"] → image + mask
-[KSampler output] ────────────────────────────────→ [Font Composite] → final image
+[Load Font] → [Render Text: "Hello"] → image + mask
+[KSampler output] ──────────────────────────────→ [ImageComposite] → final image
 ```
+
+Use any standard ComfyUI compositing node with the `image` and `mask` outputs.
 
 ### Generate a glyph and use it as an inpaint mask
 
 ```
-[Load Font] → [Glyph Render: "A"] → mask → [SetLatentNoiseMask] → [KSampler]
+[Font: MyFont] → mask → [SetLatentNoiseMask] → [KSampler]
 ```
 
 ### Compare two AI kerning models on the same font

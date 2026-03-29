@@ -27,8 +27,9 @@ import os
 import aiohttp.web as web
 from server import PromptServer
 
-from .nodes.load import ComfyFontLoadNode
-from .nodes.render import FontCompositeNode, GlyphRenderNode, TextRenderNode
+from .nodes.drawbot import DrawBotNode
+from .nodes.comfyfont import ComfyFontNode
+from .nodes.load import get_font_list  # noqa: F401 — used by /comfyfont/fonts route
 
 log = logging.getLogger(__name__)
 
@@ -184,17 +185,13 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
 # Node registration
 
 NODE_CLASS_MAPPINGS = {
-    "ComfyFontLoad":        ComfyFontLoadNode,
-    "ComfyFontTextRender":  TextRenderNode,
-    "ComfyFontGlyphRender": GlyphRenderNode,
-    "ComfyFontComposite":   FontCompositeNode,
+    "ComfyFont":        ComfyFontNode,
+    "ComfyFontDrawBot": DrawBotNode,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "ComfyFontLoad":        "Load Font (ComfyFont)",
-    "ComfyFontTextRender":  "Text Render (ComfyFont)",
-    "ComfyFontGlyphRender": "Glyph Render (ComfyFont)",
-    "ComfyFontComposite":   "Font Composite (ComfyFont)",
+    "ComfyFont":        "ComfyFont",
+    "ComfyFontDrawBot": "DrawBot",
 }
 
 WEB_DIRECTORY = "./js"

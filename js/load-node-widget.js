@@ -32,6 +32,11 @@ const LATIN_SPECIMEN = [
 function specimenLayout(filteredLines, glyphData, upm, ascender, descender, availW, availH) {
   if (availW < 20 || availH < 20) return [];
 
+  // Inner margin: 8% of the shorter dimension on each side for breathing room.
+  const margin = Math.min(availW, availH) * 0.08;
+  const innerW = availW - margin * 2;
+  const innerH = availH - margin * 2;
+
   const line_h = ascender - descender;  // font units
   const gap    = line_h * 0.06;
 
@@ -44,7 +49,7 @@ function specimenLayout(filteredLines, glyphData, upm, ascender, descender, avai
     );
     const maxW   = Math.max(...widths, 1);
     const totalH = n * line_h + (n - 1) * gap;
-    const scale  = Math.min(availW / maxW, availH / totalH);
+    const scale  = Math.min(innerW / maxW, innerH / totalH);
     if (ascender * scale >= 18) break;
     lines = lines.slice(0, -1);
   }
@@ -55,15 +60,15 @@ function specimenLayout(filteredLines, glyphData, upm, ascender, descender, avai
   );
   const maxW   = Math.max(...widths, 1);
   const totalH = n * line_h + (n - 1) * gap;
-  const scale  = Math.min(availW / maxW, availH / totalH);
+  const scale  = Math.min(innerW / maxW, innerH / totalH);
 
-  const blockTop = (availH - totalH * scale) / 2;
+  const blockTop = margin + (innerH - totalH * scale) / 2;
 
   const cmds = [];
   for (let i = 0; i < lines.length; i++) {
     const chars      = lines[i];
     const baseline_y = blockTop + (i * (line_h + gap) + ascender) * scale;
-    const x_start    = (availW - widths[i] * scale) / 2;
+    const x_start    = margin + (innerW - widths[i] * scale) / 2;
 
     let x_ufo = 0;
     for (const ch of chars) {
@@ -84,7 +89,7 @@ function specimenLayout(filteredLines, glyphData, upm, ascender, descender, avai
 async function refreshSpecimen(node) {
   const fontWidget = node.widgets?.find((w) => w.name === "font");
   const fontName   = fontWidget?.value?.trim();
-  if (!fontName || fontName.startsWith("(")) {
+  if (!fontName || !fontName) {
     node._specimenData = null;
     return;
   }
@@ -147,10 +152,6 @@ async function importFont(node) {
     const form = new FormData();
     form.append("file", file, file.name);
 
-    const statusWidget = node.widgets?.find((w) => w.name === "_status");
-    if (statusWidget) statusWidget.value = `Uploading…`;
-    node.setDirtyCanvas(true, false);
-
     try {
       const res  = await fetch("/comfyfont/import", { method: "POST", body: form });
       const data = await res.json();
@@ -166,11 +167,10 @@ async function importFont(node) {
         fontWidget.value = data.name;
       }
 
-      if (statusWidget) statusWidget.value = "";
       await refreshSpecimen(node);
 
     } catch (err) {
-      if (statusWidget) statusWidget.value = `✗ ${err.message}`;
+      alert(`ComfyFont import failed: ${err.message}`);
       console.error("ComfyFont import error:", err);
     }
   };
@@ -197,7 +197,7 @@ app.registerExtension({
   name: "ComfyFont.LoadNode",
 
   async beforeRegisterNodeDef(nodeType, nodeData) {
-    if (nodeData.name !== "ComfyFontLoad") return;
+    if (nodeData.name !== "ComfyFont") return;
 
     // ---- onNodeCreated ----
     const origCreated = nodeType.prototype.onNodeCreated;
@@ -216,18 +216,23 @@ app.registerExtension({
         };
       }
 
-      // Buttons
-      this.addWidget("button", "Import Font…", null, () => importFont(this));
-      this.addWidget("button", "Edit Font",    null, () => {
+      this.addWidget("button", "Import Font", null, () => importFont(this));
+      this.addWidget("button", "Edit Font",   null, () => {
         const name = this.widgets?.find((w) => w.name === "font")?.value?.trim();
-        if (name && !name.startsWith("(")) openEditor(name);
+        if (name) openEditor(name);
       });
 
-      // Status label — shows transient messages (upload errors, etc.)
-      const statusW    = this.addWidget("text", "_status", "", () => {});
-      statusW.disabled = true;
-
       this.size[1] += SPECIMEN_MIN_H + 16;
+    };
+
+    // ---- onConfigure — reset stale COMBO values after workflow restore ----
+    const origConfigure = nodeType.prototype.onConfigure;
+    nodeType.prototype.onConfigure = function (info) {
+      origConfigure?.apply(this, arguments);
+      const fontWidget = this.widgets?.find((w) => w.name === "font");
+      if (fontWidget && !fontWidget.options.values.includes(fontWidget.value)) {
+        fontWidget.value = fontWidget.options.values[0] ?? "";
+      }
     };
 
     // ---- onDrawBackground ----
@@ -262,6 +267,26 @@ app.registerExtension({
           ctx.fill(path2d, "nonzero");
           ctx.restore();
         }
+      } else {
+        // Empty state — centred icon and prompt
+        ctx.translate(pad, imgY);
+
+        const iconSize  = Math.max(24, Math.min(availW, availH) * 0.22);
+        const labelSize = Math.max(10, Math.min(availW, availH) * 0.065);
+        const cx        = availW / 2;
+
+        ctx.textAlign    = "center";
+        ctx.textBaseline = "middle";
+
+        // "Aa" as a typographic icon, slightly above centre
+        ctx.font      = `${iconSize}px serif`;
+        ctx.fillStyle = "#383838";
+        ctx.fillText("Aa", cx, availH * 0.44);
+
+        // Subtitle
+        ctx.font      = `${labelSize}px sans-serif`;
+        ctx.fillStyle = "#3a3a3a";
+        ctx.fillText("No font loaded", cx, availH * 0.44 + iconSize * 0.8);
       }
 
       ctx.restore();
@@ -278,7 +303,7 @@ app.registerExtension({
 
   // Refresh specimen once node is placed on canvas
   async nodeCreated(node) {
-    if (node.comfyClass !== "ComfyFontLoad") return;
+    if (node.comfyClass !== "ComfyFont") return;
     await refreshSpecimen(node);
   },
 });
