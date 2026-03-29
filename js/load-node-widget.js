@@ -119,52 +119,6 @@ function nearestSourceLayer(glyph, fontSources, axisLocation) {
   return bestLayer;
 }
 
-/**
- * Add or remove axis number widgets to match the given axes array.
- * Skips the update if the axis names haven't changed (slider values are preserved).
- */
-function syncAxisWidgets(node, axes) {
-  const existing = (node.widgets ?? []).filter((w) => w._isAxisWidget);
-  const existingNames = existing.map((w) => w._axisName);
-  const newNames = (axes ?? []).map((a) => a.name);
-
-  // No change needed.
-  if (
-    existingNames.length === newNames.length &&
-    existingNames.every((n, i) => n === newNames[i])
-  ) return;
-
-  // Remove old axis widgets.
-  node.widgets = (node.widgets ?? []).filter((w) => !w._isAxisWidget);
-
-  if (!axes?.length) return;
-
-  for (const axis of axes) {
-    if (!(axis.name in node._axisLocation)) {
-      node._axisLocation[axis.name] = axis.default ?? 0;
-    }
-    const range = axis.maximum - axis.minimum;
-    const step  = range > 10 ? 1 : 0.01;
-    const w = node.addWidget(
-      "number",
-      axis.label || axis.name,
-      node._axisLocation[axis.name],
-      (value) => {
-        node._axisLocation[axis.name] = value;
-        clearTimeout(node._axisDebounce);
-        node._axisDebounce = setTimeout(() => refreshSpecimen(node), 80);
-      },
-      { min: axis.minimum, max: axis.maximum, step, precision: step < 1 ? 2 : 0 }
-    );
-    w._isAxisWidget = true;
-    w._axisName     = axis.name;
-  }
-
-  // Ensure the node is tall enough to show the specimen below the new widgets.
-  const minH = specimenY(node) + SPECIMEN_MIN_H + 6;
-  if (node.size[1] < minH) node.size[1] = minH;
-}
-
 // ---------------------------------------------------------------------------
 // Specimen data fetch
 
@@ -176,12 +130,6 @@ async function refreshSpecimen(node) {
     return;
   }
 
-  // Reset axis location when the font changes.
-  if (node._specimenFontName !== fontName) {
-    node._axisLocation     = {};
-    node._specimenFontName = fontName;
-  }
-
   try {
     const fc = await getFontController(fontName);
     const [info, glyphMap, axes, fontSources] = await Promise.all([
@@ -191,14 +139,10 @@ async function refreshSpecimen(node) {
       fc.getSources(),
     ]);
 
-    // Sync axis sliders (no-op if axes haven't changed).
-    syncAxisWidgets(node, axes);
-
-    // Seed default axis values for any axis not yet in _axisLocation.
+    // Build default axis location (used for specimen; sliders live in the editor overlay).
+    const defaultLocation = {};
     for (const axis of axes ?? []) {
-      if (!(axis.name in node._axisLocation)) {
-        node._axisLocation[axis.name] = axis.default ?? 0;
-      }
+      defaultLocation[axis.name] = axis.default ?? 0;
     }
 
     const cpToGlyph = new Map();
@@ -217,9 +161,8 @@ async function refreshSpecimen(node) {
     const glyphData = {};
 
     if (axes?.length) {
-      // Variable font — fetch all interpolated outlines in one bulk RPC call.
-      const interpolated = await fc.getSpecimenAtLocation(uniqueGlyphs, node._axisLocation);
-      console.log("[ComfyFont] getSpecimenAtLocation returned", Object.keys(interpolated).length, "glyphs for location", node._axisLocation, "; uniqueGlyphs requested:", uniqueGlyphs.length, "; glyphMap size:", Object.keys(glyphMap).length);
+      // Variable font — fetch interpolated outlines at the default location.
+      const interpolated = await fc.getSpecimenAtLocation(uniqueGlyphs, defaultLocation);
       for (const ch of uniqueChars) {
         const glyphName = cpToGlyph.get(ch.codePointAt(0));
         const layer     = glyphName ? interpolated[glyphName] : null;
@@ -227,13 +170,13 @@ async function refreshSpecimen(node) {
         glyphData[ch] = { path2d: layer.flattenedPath2d, xAdvance: layer.xAdvance ?? 0 };
       }
     } else {
-      // Single master — use cached VariableGlyph data (no RPC needed after first load).
+      // Single master — use cached VariableGlyph data.
       await Promise.all(
         uniqueChars.map(async (ch) => {
           const glyphName = cpToGlyph.get(ch.codePointAt(0));
           if (!glyphName) return;
           const glyph = await fc.getGlyph(glyphName);
-          const layer = nearestSourceLayer(glyph, fontSources, node._axisLocation);
+          const layer = nearestSourceLayer(glyph, fontSources, {});
           if (!layer) return;
           glyphData[ch] = { path2d: layer.flattenedPath2d, xAdvance: layer.xAdvance ?? 0 };
         })
@@ -265,12 +208,27 @@ async function importFont(node) {
     const file = input.files[0];
     if (!file) return;
 
-    const form = new FormData();
-    form.append("file", file, file.name);
+    // In Electron, File objects expose a .path property with the absolute
+    // local path. We send that to the server so it can copy the file (and
+    // any referenced UFO masters) directly from disk — no upload needed.
+    const localPath = file.path;
 
     try {
-      const res  = await fetch("/comfyfont/import", { method: "POST", body: form });
-      const data = await res.json();
+      let res, data;
+      if (localPath) {
+        res  = await fetch("/comfyfont/import", {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify({ path: localPath, name: file.name }),
+        });
+      } else {
+        // Fallback for non-Electron contexts: upload the file bytes.
+        const form = new FormData();
+        form.append("files", file, file.name);
+        res = await fetch("/comfyfont/import", { method: "POST", body: form });
+      }
+
+      data = await res.json();
       if (!res.ok) throw new Error(data.error || res.statusText);
 
       // Add the new font to the COMBO and select it
@@ -320,9 +278,7 @@ app.registerExtension({
     nodeType.prototype.onNodeCreated = function () {
       origCreated?.apply(this, arguments);
 
-      this._specimenData     = null;
-      this._axisLocation     = {};
-      this._specimenFontName = null;
+      this._specimenData = null;
 
       // Refresh specimen when the COMBO selection changes
       const fontWidget = this.widgets?.find((w) => w.name === "font");

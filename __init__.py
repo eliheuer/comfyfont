@@ -93,65 +93,142 @@ routes = PromptServer.instance.routes
 @routes.post("/comfyfont/import")
 async def _import_font(request: web.Request) -> web.Response:
     """
-    Receive a font file upload.
+    Import a font into the workspace.
 
-    Supported uploads:
-    - TTF/OTF/WOFF/WOFF2 — copied to workspace; UFO converted alongside it.
-    - UFO (directory) — copied to workspace; TTF compiled alongside it.
-    - ZIP containing a .designspace + UFO masters — extracted into workspace as-is.
-      The .designspace filename is returned as the name.
-    - .designspace alone — copied to workspace (UFO masters must already be present).
+    Accepts either:
+    - JSON body {"path": "/abs/path/to/font"} — Electron path-based import.
+      The server reads files directly from disk. For .designspace, all
+      referenced UFO masters are copied into the workspace alongside it.
+    - Multipart form with "files" fields — fallback upload for non-Electron.
 
     Returns {"ok": true, "name": "<filename>", "path": "<absolute path>"}.
     """
     try:
-        reader = await request.multipart()
-        field  = await reader.next()
-        if field is None:
-            return web.json_response({"error": "no file"}, status=400)
-
-        filename  = field.filename or "upload.ttf"
-        ext       = os.path.splitext(filename)[1].lower()
-        dest_path = os.path.join(FONTS_DIR, filename)
-
-        with open(dest_path, "wb") as f:
-            while True:
-                chunk = await field.read_chunk()
-                if not chunk:
-                    break
-                f.write(chunk)
-
         loop = asyncio.get_running_loop()
 
-        if ext in (".ttf", ".otf", ".woff", ".woff2"):
-            ufo_path = os.path.splitext(dest_path)[0] + ".ufo"
-            await loop.run_in_executor(None, _convert_ttf_to_ufo, dest_path, ufo_path)
+        if request.content_type == "application/json":
+            body     = await request.json()
+            src_path = body.get("path", "").rstrip("/")
+            orig_name = body.get("name", "")
+            if not src_path or not os.path.exists(src_path):
+                return web.json_response({"error": f"File not found: {src_path!r}"}, status=400)
 
-        elif ext == ".ufo" or os.path.isdir(dest_path):
-            from .core.compile import compile_ufo_to_ttf
-            await loop.run_in_executor(None, compile_ufo_to_ttf, dest_path)
+            # Use the original filename's extension (ToDesktop copies files to
+            # UUID temp paths with no extension; file.name preserves the original).
+            ext     = os.path.splitext(orig_name or src_path)[1].lower()
+            src_dir = os.path.dirname(src_path)
 
-        elif ext == ".zip":
-            # A zip may contain a .designspace + UFO masters.
-            # Extract everything into FONTS_DIR and return the .designspace name.
-            import zipfile
-            ds_name = None
-            with zipfile.ZipFile(dest_path) as zf:
-                zf.extractall(FONTS_DIR)
-                for name in zf.namelist():
-                    if name.endswith(".designspace"):
-                        ds_name = os.path.basename(name)
-            os.remove(dest_path)  # remove the zip after extraction
-            if ds_name is None:
-                return web.json_response(
-                    {"error": "zip contained no .designspace file"}, status=400
-                )
-            filename  = ds_name
-            dest_path = os.path.join(FONTS_DIR, ds_name)
+            if ext == ".designspace":
+                # Copy the .designspace + all UFO masters it references.
+                dest_ds = os.path.join(FONTS_DIR, os.path.basename(src_path))
+                import shutil, xml.etree.ElementTree as ET
+                shutil.copy2(src_path, dest_ds)
+                # Parse source paths from the XML and copy each UFO.
+                root = ET.parse(src_path).getroot()
+                for src_el in root.findall(".//sources/source"):
+                    rel = src_el.get("filename", "")
+                    if not rel:
+                        continue
+                    ufo_src = os.path.normpath(os.path.join(src_dir, rel))
+                    if not os.path.exists(ufo_src):
+                        log.warning("UFO not found, skipping: %s", ufo_src)
+                        continue
+                    # Preserve the relative path structure so the .designspace
+                    # references still resolve correctly.
+                    ufo_dest = os.path.normpath(os.path.join(FONTS_DIR, rel))
+                    if os.path.exists(ufo_dest):
+                        shutil.rmtree(ufo_dest)
+                    os.makedirs(os.path.dirname(ufo_dest), exist_ok=True)
+                    shutil.copytree(ufo_src, ufo_dest)
+                    log.info("Copied UFO %s → %s", ufo_src, ufo_dest)
+                filename  = os.path.basename(dest_ds)
+                main_path = dest_ds
 
-        # .designspace alone: just copy it — UFO masters must already be present.
+            elif ext in (".ttf", ".otf", ".woff", ".woff2"):
+                import shutil
+                dest = os.path.join(FONTS_DIR, orig_name or os.path.basename(src_path))
+                shutil.copy2(src_path, dest)
+                ufo_path = os.path.splitext(dest)[0] + ".ufo"
+                await loop.run_in_executor(None, _convert_ttf_to_ufo, dest, ufo_path)
+                filename, main_path = os.path.basename(dest), dest
 
-        return web.json_response({"ok": True, "name": filename, "path": dest_path})
+            elif ext == ".ufo" or os.path.isdir(src_path):
+                import shutil
+                from .core.compile import compile_ufo_to_ttf
+                dest = os.path.join(FONTS_DIR, orig_name or os.path.basename(src_path))
+                if os.path.exists(dest):
+                    shutil.rmtree(dest)
+                shutil.copytree(src_path, dest)
+                await loop.run_in_executor(None, compile_ufo_to_ttf, dest)
+                filename, main_path = os.path.basename(dest), dest
+
+            elif ext == ".zip":
+                import shutil, zipfile
+                dest = os.path.join(FONTS_DIR, os.path.basename(src_path))
+                shutil.copy2(src_path, dest)
+                ds_name = None
+                ufo_name = None
+                with zipfile.ZipFile(dest) as zf:
+                    zf.extractall(FONTS_DIR)
+                    for name in zf.namelist():
+                        if name.endswith(".designspace"):
+                            ds_name = os.path.basename(name)
+                        if not ufo_name and (name.endswith(".ufo/") or name.endswith(".ufo")):
+                            ufo_name = name.split("/")[0]
+                os.remove(dest)
+                if ds_name:
+                    filename  = ds_name
+                    main_path = os.path.join(FONTS_DIR, ds_name)
+                elif ufo_name:
+                    # UFO folder extracted from zip — compile to TTF
+                    from .core.compile import compile_ufo_to_ttf
+                    ufo_dest = os.path.join(FONTS_DIR, ufo_name)
+                    await loop.run_in_executor(None, compile_ufo_to_ttf, ufo_dest)
+                    filename  = ufo_name
+                    main_path = ufo_dest
+                else:
+                    return web.json_response({"error": "zip contained no .designspace or .ufo"}, status=400)
+
+            else:
+                return web.json_response({"error": f"Unsupported format: {ext!r}"}, status=400)
+
+        else:
+            # Multipart fallback — write files preserving relative paths.
+            reader  = await request.multipart()
+            written = []
+            async for field in reader:
+                rel = field.filename
+                if not rel:
+                    continue
+                dest = os.path.normpath(os.path.join(FONTS_DIR, rel))
+                if not dest.startswith(FONTS_DIR):
+                    continue
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                with open(dest, "wb") as f:
+                    while chunk := await field.read_chunk():
+                        f.write(chunk)
+                written.append(dest)
+
+            if not written:
+                return web.json_response({"error": "no files received"}, status=400)
+
+            def _pick(exts):
+                return next((p for p in written if os.path.splitext(p)[1].lower() in exts), None)
+
+            main_path = (_pick({".designspace"}) or _pick({".ttf", ".otf", ".woff", ".woff2"})
+                         or next((p for p in written if p.endswith(".ufo")), written[0]))
+            ext = os.path.splitext(main_path)[1].lower()
+
+            if ext in (".ttf", ".otf", ".woff", ".woff2"):
+                ufo_path = os.path.splitext(main_path)[0] + ".ufo"
+                await loop.run_in_executor(None, _convert_ttf_to_ufo, main_path, ufo_path)
+            elif ext == ".ufo":
+                from .core.compile import compile_ufo_to_ttf
+                await loop.run_in_executor(None, compile_ufo_to_ttf, main_path)
+
+            filename = os.path.basename(main_path)
+
+        return web.json_response({"ok": True, "name": filename, "path": main_path})
 
     except Exception as exc:
         log.exception("import error")

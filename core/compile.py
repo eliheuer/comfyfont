@@ -11,16 +11,13 @@ log = logging.getLogger(__name__)
 
 def compile_ufo_to_ttf(ufo_path: str) -> str:
     """Compile a UFO to a TrueType-flavored TTF. Returns the TTF path."""
-    import tempfile
-    from fontmake.font_project import FontProject
+    import ufo2ft
+    import ufoLib2
 
     ttf_path = os.path.splitext(ufo_path)[0] + ".ttf"
-    with tempfile.TemporaryDirectory() as tmp:
-        FontProject().build_ttfs([ufo_path], output_dir=tmp)
-        built = [f for f in os.listdir(tmp) if f.endswith(".ttf")]
-        if not built:
-            raise RuntimeError(f"fontmake produced no output for {ufo_path}")
-        shutil.copy(os.path.join(tmp, built[0]), ttf_path)
+    font = ufoLib2.Font.open(ufo_path)
+    tt = ufo2ft.compileTTF(font)
+    tt.save(ttf_path)
     log.info("Compiled %s → %s", ufo_path, ttf_path)
     return ttf_path
 
