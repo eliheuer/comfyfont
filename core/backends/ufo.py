@@ -55,11 +55,17 @@ class UFOBackend:
         layer = Layer(glyph=staticGlyph)
         source = GlyphSource(name="default", layerName="default", location={})
 
+        customData = {}
+        mark = ufoGlyph.lib.get("public.markColor")
+        if mark:
+            customData["markColor"] = mark
+
         return VariableGlyph(
             name=glyphName,
             axes=[],
             sources=[source],
             layers={"default": layer},
+            customData=customData,
         )
 
     def _variableGlyphToUFO(self, glyphName: str, glyph: VariableGlyph) -> None:
@@ -92,6 +98,13 @@ class UFOBackend:
             pointPen.addComponent(
                 comp.name, comp.transformation.to_tuple()
             )
+
+        # Write mark color
+        mark = glyph.customData.get("markColor") if glyph.customData else None
+        if mark:
+            ufoGlyph.lib["public.markColor"] = mark
+        elif "public.markColor" in ufoGlyph.lib:
+            del ufoGlyph.lib["public.markColor"]
 
     # ------------------------------------------------------------------
     # ReadableFontBackend

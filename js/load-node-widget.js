@@ -307,6 +307,7 @@ app.registerExtension({
       if (fontWidget && !fontWidget.options.values.includes(fontWidget.value)) {
         fontWidget.value = fontWidget.options.values[0] ?? "";
       }
+      refreshSpecimen(this);
     };
 
     // ---- onDrawBackground ----

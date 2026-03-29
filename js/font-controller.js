@@ -198,6 +198,24 @@ export class FontController {
   // -----------------------------------------------------------------------
   // Editing
 
+  async createGlyph(codepoint) {
+    const name = codepoint <= 0xFFFF
+      ? `uni${codepoint.toString(16).toUpperCase().padStart(4, '0')}`
+      : `u${codepoint.toString(16).toUpperCase()}`;
+    await this._backend.createGlyph(name, [codepoint]);
+    this._glyphMap = null;  // invalidate so next getGlyphMap re-fetches
+    return name;
+  }
+
+  async getMarkColors() {
+    return await this._backend.getMarkColors();
+  }
+
+  async putMarkColor(glyphName, markColor) {
+    await this._backend.putMarkColor(glyphName, markColor ?? null);
+    this._glyphCache.delete(glyphName);
+  }
+
   /**
    * Send a live (in-progress) change. No disk write on server.
    * Call this during drag operations for real-time multi-client preview.

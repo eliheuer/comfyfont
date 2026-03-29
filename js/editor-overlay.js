@@ -116,6 +116,8 @@ const CSS = `
   display: none;
 }
 .cf-pane.active { display: flex; flex-direction: column; }
+/* Font tab pane: let GlyphGrid's 3-column root fill the space */
+.cf-pane-font.active { display: flex; flex-direction: row; padding: 0; }
 `;
 
 class EditorOverlay {
@@ -264,7 +266,7 @@ class EditorOverlay {
 
   _addFontTab() {
     const pane = document.createElement("div");
-    pane.className = "cf-pane";
+    pane.className = "cf-pane cf-pane-font";
     this._content.appendChild(pane);
 
     const grid = new GlyphGrid(pane, this._fontController, (glyphName) => {

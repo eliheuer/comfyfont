@@ -173,6 +173,80 @@ class FontHandler:
         self._glyphCache.pop(glyphName, None)
         return await self.getGlyph(glyphName, connection=connection)
 
+    @remoteMethod
+    async def createGlyph(
+        self, glyphName: str, codePoints: list[int], *, connection=None
+    ) -> None:
+        """Create a new stub glyph (empty path) with the given name and unicode values."""
+        async with self._lock:
+            # Don't overwrite an existing glyph
+            if glyphName in self._glyphCache:
+                return
+            existing = await self._backend.getGlyph(glyphName)
+            if existing is not None:
+                self._glyphCache[glyphName] = existing
+                return
+
+            fontInfo = await self._backend.getFontInfo()
+            upm = fontInfo.unitsPerEm or 1000
+
+            from .classes import GlyphSource, Layer, StaticGlyph, VariableGlyph
+            from .path import PackedPath
+            static = StaticGlyph(path=PackedPath(), xAdvance=float(upm))
+            layer  = Layer(glyph=static)
+            source = GlyphSource(name="default", layerName="default", location={})
+            glyph  = VariableGlyph(
+                name=glyphName, axes=[], sources=[source],
+                layers={"default": layer},
+            )
+            self._glyphCache[glyphName] = glyph
+            if self._glyphMap is not None:
+                self._glyphMap[glyphName] = codePoints
+
+            if isinstance(self._backend, WritableFontBackend):
+                await self._backend.putGlyph(glyphName, glyph, codePoints)
+
+    @remoteMethod
+    async def getMarkColors(self, *, connection=None) -> dict[str, str]:
+        """Return {glyphName: rgba} for all glyphs that have a mark color set."""
+        glyphMap = await self._backend.getGlyphMap()
+        result = {}
+        for name in glyphMap:
+            if name in self._glyphCache:
+                glyph = self._glyphCache[name]
+            else:
+                glyph = await self._backend.getGlyph(name)
+                if glyph is not None:
+                    self._glyphCache[name] = glyph
+            if glyph and glyph.customData.get("markColor"):
+                result[name] = glyph.customData["markColor"]
+        return result
+
+    @remoteMethod
+    async def putMarkColor(
+        self, glyphName: str, markColor: str | None, *, connection=None
+    ) -> None:
+        """Set or clear the mark color on a glyph."""
+        async with self._lock:
+            if glyphName not in self._glyphCache:
+                glyph = await self._backend.getGlyph(glyphName)
+                if glyph is None:
+                    return
+                self._glyphCache[glyphName] = glyph
+
+            glyph = self._glyphCache[glyphName]
+            if markColor:
+                glyph.customData["markColor"] = markColor
+            else:
+                glyph.customData.pop("markColor", None)
+
+            if isinstance(self._backend, WritableFontBackend):
+                codePoints = (self._glyphMap or {}).get(glyphName, [])
+                await self._backend.putGlyph(glyphName, glyph, codePoints)
+
+        change = {"p": ["glyphs", glyphName, "customData", "markColor"], "v": markColor}
+        await self._broadcast("externalChange", [change, False], exclude=connection)
+
     # ------------------------------------------------------------------
     # Helpers
 
