@@ -106,6 +106,16 @@ class UFOBackend:
     async def getGlyph(self, glyphName: str) -> VariableGlyph | None:
         return self._glyphToVariableGlyph(glyphName)
 
+    async def getGlyphAtLocation(
+        self, glyphName: str, location: dict[str, float]
+    ) -> StaticGlyph | None:
+        # Single master — location is irrelevant.
+        g = self._glyphToVariableGlyph(glyphName)
+        if g is None:
+            return None
+        layer = g.layers.get(g.sources[0].layerName) if g.sources else None
+        return layer.glyph if layer else None
+
     async def getAxes(self) -> list[GlobalAxis]:
         return []
 

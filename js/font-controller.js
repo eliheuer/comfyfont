@@ -57,6 +57,13 @@ export class VariableGlyphController {
     const src = this.sources[0];
     return src ? this.layers[src.layerName] : null;
   }
+
+  /** Return the StaticGlyphController for a specific master (FontSource identifier). */
+  layerForMaster(masterId) {
+    if (!masterId) return this.defaultLayer;
+    const src = this.sources.find((s) => s.locationBase === masterId);
+    return src ? (this.layers[src.layerName] ?? this.defaultLayer) : this.defaultLayer;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -147,6 +154,26 @@ export class FontController {
       this._axes = await this._backend.getAxes();
     }
     return this._axes;
+  }
+
+  async getSources() {
+    if (!this._sources) {
+      this._sources = await this._backend.getSources();
+    }
+    return this._sources;
+  }
+
+  /**
+   * Bulk-interpolate multiple glyphs at a given axis location.
+   * Returns {glyphName: StaticGlyphController} for all glyphs that exist.
+   */
+  async getSpecimenAtLocation(glyphNames, location) {
+    const data = await this._backend.getSpecimenAtLocation(glyphNames, location);
+    const result = {};
+    for (const [name, glyphData] of Object.entries(data ?? {})) {
+      result[name] = new StaticGlyphController(glyphData);
+    }
+    return result;
   }
 
   async getUnitsPerEm() {

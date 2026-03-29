@@ -1,13 +1,15 @@
 from .base import ReadableFontBackend, WritableFontBackend
+from .designspace import DesignspaceBackend
 from .opentype import OTFBackend
 from .ufo import UFOBackend
 
 EXTENSION_MAP: dict[str, type] = {
-    ".ttf": OTFBackend,
-    ".otf": OTFBackend,
-    ".woff": OTFBackend,
-    ".woff2": OTFBackend,
-    ".ufo": UFOBackend,
+    ".ttf":         OTFBackend,
+    ".otf":         OTFBackend,
+    ".woff":        OTFBackend,
+    ".woff2":       OTFBackend,
+    ".ufo":         UFOBackend,
+    ".designspace": DesignspaceBackend,
 }
 
 

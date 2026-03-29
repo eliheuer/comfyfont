@@ -9,17 +9,38 @@ The node canvas shows a live vector specimen preview.
 from __future__ import annotations
 
 import os
+import xml.etree.ElementTree as ET
 
 _FONTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "fonts")
 
 _FONT_EXTS = {".ttf", ".otf", ".woff", ".woff2", ".designspace"}
 
 
+def _ufo_masters_in_designspace(ds_path: str) -> set[str]:
+    """
+    Return the set of UFO basenames that are masters of the given .designspace file.
+    Uses a lightweight stdlib XML parse — no fontTools import at list time.
+    """
+    try:
+        root = ET.parse(ds_path).getroot()
+        return {
+            os.path.basename(src.get("filename", ""))
+            for src in root.findall(".//sources/source")
+            if src.get("filename", "").endswith(".ufo")
+        }
+    except Exception:
+        return set()
+
+
 def get_font_list() -> list[str]:
     """
     Return the sorted list of font names available in the workspace.
 
-    Shows compiled fonts and bare .ufo directories that have no sibling TTF yet.
+    - Compiled fonts (.ttf/.otf/.woff/.woff2) always appear.
+    - .designspace files always appear.
+    - A bare .ufo directory appears only when it has no sibling .ttf AND is not
+      a master of any .designspace in the workspace (those are internal sources,
+      not top-level fonts).
     """
     try:
         entries = os.listdir(_FONTS_DIR)
@@ -27,13 +48,25 @@ def get_font_list() -> list[str]:
         return []
 
     names = set(entries)
+
+    # Collect UFO basenames that belong to a designspace project.
+    masked_ufos: set[str] = set()
+    for e in entries:
+        if e.endswith(".designspace"):
+            masked_ufos |= _ufo_masters_in_designspace(
+                os.path.join(_FONTS_DIR, e)
+            )
+
     fonts = []
     for e in entries:
         ext = os.path.splitext(e)[1].lower()
         if ext in _FONT_EXTS:
             fonts.append(e)
         elif e.endswith(".ufo") and os.path.isdir(os.path.join(_FONTS_DIR, e)):
-            if os.path.splitext(e)[0] + ".ttf" not in names:
+            if (
+                e not in masked_ufos
+                and os.path.splitext(e)[0] + ".ttf" not in names
+            ):
                 fonts.append(e)
 
     return [""] + sorted(fonts)

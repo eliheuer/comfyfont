@@ -18,6 +18,7 @@ from typing import Any
 from .backends import ReadableFontBackend, WritableFontBackend, backendForPath
 from .changes import applyChange, makeRollback
 from .classes import FontInfo, FontSource, GlobalAxis, VariableGlyph, unstructure
+from .path import PackedPath
 
 log = logging.getLogger(__name__)
 
@@ -138,6 +139,33 @@ class FontHandler:
 
         # Broadcast to other clients
         await self._broadcast("externalChange", [finalChange, False], exclude=connection)
+
+    @remoteMethod
+    async def getSpecimenAtLocation(
+        self,
+        glyphNames: list[str],
+        location: dict[str, float],
+        *,
+        connection=None,
+    ) -> dict:
+        """
+        Bulk-interpolate multiple glyphs at the given axis location.
+
+        Returns a dict of {glyphName: serialised StaticGlyph} for every glyph
+        that exists in the font. Used by the node canvas specimen preview.
+        """
+        result = {}
+        if not hasattr(self._backend, "getGlyphAtLocation"):
+            log.warning("getSpecimenAtLocation: backend has no getGlyphAtLocation")
+            return result
+        for name in glyphNames:
+            try:
+                static = await self._backend.getGlyphAtLocation(name, location)
+                if static is not None:
+                    result[name] = unstructure(static)
+            except Exception as exc:
+                log.warning("getGlyphAtLocation failed for %r: %s", name, exc, exc_info=True)
+        return result
 
     @remoteMethod
     async def reloadGlyph(self, glyphName: str, *, connection=None) -> VariableGlyph | None:

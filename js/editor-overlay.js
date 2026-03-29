@@ -30,6 +30,7 @@ export function openEditor(fontName) {
   _overlay.open(fontName);
 }
 
+
 // ---------------------------------------------------------------------------
 
 const CSS = `
@@ -59,6 +60,21 @@ const CSS = `
   cursor: pointer; padding: 0 4px; line-height: 1;
 }
 #cf-close-btn:hover { color: #fff; }
+
+/* Master pills */
+#cf-masters {
+  display: flex; align-items: center; gap: 4px;
+}
+.cf-master-pill {
+  background: #2a2a2a; color: #999; border: 1px solid #3a3a3a;
+  padding: 3px 10px; border-radius: 12px; cursor: pointer;
+  font-size: 11px; white-space: nowrap; transition: all 0.1s;
+}
+.cf-master-pill:hover { background: #333; color: #ccc; border-color: #555; }
+.cf-master-pill.active {
+  background: #1a3d22; color: #66ee88;
+  border-color: #66ee88;
+}
 
 /* Tab bar */
 #cf-tabs {
@@ -113,6 +129,10 @@ class EditorOverlay {
     this._tabs = [];   // [{id, label, closeable, pane, instance}]
     this._activeTabId = null;
 
+    // Master state
+    this._sources = {};   // {id: {name, location, ...}}
+    this._activeMasterId = null;
+
     // Key handler
     this._keyHandler = (e) => {
       if (e.key === "Escape") this.close();
@@ -143,6 +163,18 @@ class EditorOverlay {
     // Update title
     this._el.querySelector("#cf-title").textContent = `ComfyFont — ${fontName}`;
 
+    // Load sources for master pills
+    try {
+      this._sources = await this._fontController.getSources() ?? {};
+    } catch {
+      this._sources = {};
+    }
+    const sourceIds = Object.keys(this._sources);
+    if (!this._activeMasterId || !this._sources[this._activeMasterId]) {
+      this._activeMasterId = sourceIds[0] ?? null;
+    }
+    this._renderMasterPills();
+
     // Ensure Font tab exists and is active
     if (!this._tabs.find((t) => t.id === "__font__")) {
       this._addFontTab();
@@ -170,6 +202,7 @@ class EditorOverlay {
     el.innerHTML = `
       <div id="cf-header">
         <span id="cf-title">ComfyFont</span>
+        <div id="cf-masters"></div>
         <button id="cf-save-btn">Save</button>
         <button id="cf-close-btn" title="Close (Esc)">✕</button>
       </div>
@@ -183,9 +216,47 @@ class EditorOverlay {
     el.querySelector("#cf-save-btn").onclick = () => this._save();
     el.querySelector("#cf-tab-add").onclick = () => this._promptOpenGlyph();
 
-    this._tabBar = el.querySelector("#cf-tabs");
+    this._tabBar  = el.querySelector("#cf-tabs");
     this._content = el.querySelector("#cf-content");
+    this._mastersEl = el.querySelector("#cf-masters");
     this._el = el;
+  }
+
+  // -------------------------------------------------------------------------
+  // Master pills
+
+  _renderMasterPills() {
+    if (!this._mastersEl) return;
+    this._mastersEl.innerHTML = "";
+
+    const ids = Object.keys(this._sources);
+    if (ids.length < 2) return;  // Only show pills for variable/multi-master fonts
+
+    for (const id of ids) {
+      const src = this._sources[id];
+      const label = src.name || id;
+      const pill = document.createElement("button");
+      pill.className = "cf-master-pill" + (id === this._activeMasterId ? " active" : "");
+      pill.dataset.masterId = id;
+      pill.textContent = label;
+      pill.title = label;
+      pill.onclick = () => this._setMaster(id);
+      this._mastersEl.appendChild(pill);
+    }
+  }
+
+  _setMaster(masterId) {
+    this._activeMasterId = masterId;
+
+    // Update pill active state
+    for (const pill of this._mastersEl.querySelectorAll(".cf-master-pill")) {
+      pill.classList.toggle("active", pill.dataset.masterId === masterId);
+    }
+
+    // Propagate to all open tabs
+    for (const tab of this._tabs) {
+      tab.instance?.setMaster?.(masterId);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -198,7 +269,7 @@ class EditorOverlay {
 
     const grid = new GlyphGrid(pane, this._fontController, (glyphName) => {
       this.openGlyphTab(glyphName);
-    });
+    }, this._activeMasterId);
 
     const tab = { id: "__font__", label: "Font", closeable: false, pane, instance: grid };
     this._tabs.unshift(tab);
@@ -217,6 +288,7 @@ class EditorOverlay {
 
     const editor = new GlyphEditorTab(pane, this._fontController, glyphName, {
       onNavigate: (name) => this.openGlyphTab(name),
+      masterId: this._activeMasterId,
     });
 
     const tab = { id: glyphName, label: glyphName, closeable: true, pane, instance: editor };

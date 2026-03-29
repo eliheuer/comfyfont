@@ -84,19 +84,122 @@ function specimenLayout(filteredLines, glyphData, upm, ascender, descender, avai
 }
 
 // ---------------------------------------------------------------------------
+// Axis helpers
+
+/**
+ * For a VariableGlyphController, pick the layer whose source's font-level
+ * location is closest to axisLocation (nearest-master approach).
+ * Falls back to defaultLayer when there are no font sources or no axes.
+ */
+function nearestSourceLayer(glyph, fontSources, axisLocation) {
+  if (!glyph) return null;
+  const axisNames = Object.keys(axisLocation ?? {});
+  if (!axisNames.length || !fontSources || !Object.keys(fontSources).length) {
+    return glyph.defaultLayer;
+  }
+
+  let bestLayer = glyph.defaultLayer;
+  let bestDist  = Infinity;
+
+  for (const src of glyph.sources ?? []) {
+    const fs = fontSources[src.locationBase];
+    if (!fs) continue;
+    const fsLoc = fs.location ?? {};
+    let dist = 0;
+    for (const name of axisNames) {
+      const diff = (axisLocation[name] ?? 0) - (fsLoc[name] ?? 0);
+      dist += diff * diff;
+    }
+    if (dist < bestDist) {
+      bestDist = dist;
+      const layer = glyph.layers[src.layerName];
+      if (layer) bestLayer = layer;
+    }
+  }
+  return bestLayer;
+}
+
+/**
+ * Add or remove axis number widgets to match the given axes array.
+ * Skips the update if the axis names haven't changed (slider values are preserved).
+ */
+function syncAxisWidgets(node, axes) {
+  const existing = (node.widgets ?? []).filter((w) => w._isAxisWidget);
+  const existingNames = existing.map((w) => w._axisName);
+  const newNames = (axes ?? []).map((a) => a.name);
+
+  // No change needed.
+  if (
+    existingNames.length === newNames.length &&
+    existingNames.every((n, i) => n === newNames[i])
+  ) return;
+
+  // Remove old axis widgets.
+  node.widgets = (node.widgets ?? []).filter((w) => !w._isAxisWidget);
+
+  if (!axes?.length) return;
+
+  for (const axis of axes) {
+    if (!(axis.name in node._axisLocation)) {
+      node._axisLocation[axis.name] = axis.default ?? 0;
+    }
+    const range = axis.maximum - axis.minimum;
+    const step  = range > 10 ? 1 : 0.01;
+    const w = node.addWidget(
+      "number",
+      axis.label || axis.name,
+      node._axisLocation[axis.name],
+      (value) => {
+        node._axisLocation[axis.name] = value;
+        clearTimeout(node._axisDebounce);
+        node._axisDebounce = setTimeout(() => refreshSpecimen(node), 80);
+      },
+      { min: axis.minimum, max: axis.maximum, step, precision: step < 1 ? 2 : 0 }
+    );
+    w._isAxisWidget = true;
+    w._axisName     = axis.name;
+  }
+
+  // Ensure the node is tall enough to show the specimen below the new widgets.
+  const minH = specimenY(node) + SPECIMEN_MIN_H + 6;
+  if (node.size[1] < minH) node.size[1] = minH;
+}
+
+// ---------------------------------------------------------------------------
 // Specimen data fetch
 
 async function refreshSpecimen(node) {
   const fontWidget = node.widgets?.find((w) => w.name === "font");
   const fontName   = fontWidget?.value?.trim();
-  if (!fontName || !fontName) {
+  if (!fontName) {
     node._specimenData = null;
     return;
   }
 
+  // Reset axis location when the font changes.
+  if (node._specimenFontName !== fontName) {
+    node._axisLocation     = {};
+    node._specimenFontName = fontName;
+  }
+
   try {
     const fc = await getFontController(fontName);
-    const [info, glyphMap] = await Promise.all([fc.getFontInfo(), fc.getGlyphMap()]);
+    const [info, glyphMap, axes, fontSources] = await Promise.all([
+      fc.getFontInfo(),
+      fc.getGlyphMap(),
+      fc.getAxes(),
+      fc.getSources(),
+    ]);
+
+    // Sync axis sliders (no-op if axes haven't changed).
+    syncAxisWidgets(node, axes);
+
+    // Seed default axis values for any axis not yet in _axisLocation.
+    for (const axis of axes ?? []) {
+      if (!(axis.name in node._axisLocation)) {
+        node._axisLocation[axis.name] = axis.default ?? 0;
+      }
+    }
 
     const cpToGlyph = new Map();
     for (const [name, codepoints] of Object.entries(glyphMap)) {
@@ -107,22 +210,35 @@ async function refreshSpecimen(node) {
       .map((line) => [...line].filter((ch) => cpToGlyph.has(ch.codePointAt(0))))
       .filter((line) => line.length > 0);
 
-    const uniqueChars = [...new Set(filteredLines.flat())];
-    const glyphData   = {};
+    const uniqueChars  = [...new Set(filteredLines.flat())];
+    const uniqueGlyphs = [...new Set(
+      uniqueChars.map((ch) => cpToGlyph.get(ch.codePointAt(0))).filter(Boolean)
+    )];
+    const glyphData = {};
 
-    await Promise.all(
-      uniqueChars.map(async (ch) => {
+    if (axes?.length) {
+      // Variable font — fetch all interpolated outlines in one bulk RPC call.
+      const interpolated = await fc.getSpecimenAtLocation(uniqueGlyphs, node._axisLocation);
+      console.log("[ComfyFont] getSpecimenAtLocation returned", Object.keys(interpolated).length, "glyphs for location", node._axisLocation, "; uniqueGlyphs requested:", uniqueGlyphs.length, "; glyphMap size:", Object.keys(glyphMap).length);
+      for (const ch of uniqueChars) {
         const glyphName = cpToGlyph.get(ch.codePointAt(0));
-        if (!glyphName) return;
-        const glyph = await fc.getGlyph(glyphName);
-        const layer = glyph?.defaultLayer;
-        if (!layer) return;
-        glyphData[ch] = {
-          path2d:   layer.flattenedPath2d,
-          xAdvance: layer.xAdvance ?? 0,
-        };
-      })
-    );
+        const layer     = glyphName ? interpolated[glyphName] : null;
+        if (!layer) continue;
+        glyphData[ch] = { path2d: layer.flattenedPath2d, xAdvance: layer.xAdvance ?? 0 };
+      }
+    } else {
+      // Single master — use cached VariableGlyph data (no RPC needed after first load).
+      await Promise.all(
+        uniqueChars.map(async (ch) => {
+          const glyphName = cpToGlyph.get(ch.codePointAt(0));
+          if (!glyphName) return;
+          const glyph = await fc.getGlyph(glyphName);
+          const layer = nearestSourceLayer(glyph, fontSources, node._axisLocation);
+          if (!layer) return;
+          glyphData[ch] = { path2d: layer.flattenedPath2d, xAdvance: layer.xAdvance ?? 0 };
+        })
+      );
+    }
 
     const upm       = info.unitsPerEm ?? 1000;
     const ascender  = info.ascender   ?? Math.round(upm * 0.8);
@@ -143,7 +259,7 @@ async function refreshSpecimen(node) {
 async function importFont(node) {
   const input  = document.createElement("input");
   input.type   = "file";
-  input.accept = ".ttf,.otf,.woff,.woff2,.ufo";
+  input.accept = ".ttf,.otf,.woff,.woff2,.ufo,.designspace,.zip";
 
   input.onchange = async () => {
     const file = input.files[0];
@@ -204,7 +320,9 @@ app.registerExtension({
     nodeType.prototype.onNodeCreated = function () {
       origCreated?.apply(this, arguments);
 
-      this._specimenData = null;
+      this._specimenData     = null;
+      this._axisLocation     = {};
+      this._specimenFontName = null;
 
       // Refresh specimen when the COMBO selection changes
       const fontWidget = this.widgets?.find((w) => w.name === "font");

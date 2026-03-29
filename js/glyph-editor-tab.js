@@ -58,6 +58,7 @@ export class GlyphEditorTab {
     this._fc = fontController;
     this._glyphName = glyphName;
     this._onNavigate = options.onNavigate ?? (() => {});
+    this._masterId = options.masterId ?? null;
     this._glyph = null;
     this._dirty = false;
 
@@ -325,9 +326,14 @@ export class GlyphEditorTab {
     void e;
   }
 
+  setMaster(masterId) {
+    this._masterId = masterId;
+    this._draw();
+    this._updateInfo();
+  }
+
   _defaultLayer() {
-    // VariableGlyphController.defaultLayer returns a StaticGlyphController
-    return this._glyph?.defaultLayer ?? null;
+    return this._glyph?.layerForMaster(this._masterId) ?? null;
   }
 
   _updateInfo() {

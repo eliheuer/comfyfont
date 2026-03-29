@@ -17,12 +17,6 @@ def _pil_to_tensor(img: Image.Image) -> torch.Tensor:
     return torch.from_numpy(arr).unsqueeze(0)
 
 
-def _alpha_to_mask(img: Image.Image) -> torch.Tensor:
-    """PIL RGBA image → [1, H, W] float32 mask from alpha channel."""
-    alpha = np.array(img.split()[3]).astype(np.float32) / 255.0
-    return torch.from_numpy(alpha).unsqueeze(0)
-
-
 def _resolve_font(font: str) -> str:
     """Resolve a FONT value (absolute workspace path) to a renderable TTF/OTF path."""
     if os.path.isdir(font):

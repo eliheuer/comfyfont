@@ -28,8 +28,7 @@ import aiohttp.web as web
 from server import PromptServer
 
 from .nodes.drawbot import DrawBotNode
-from .nodes.comfyfont import ComfyFontNode
-from .nodes.load import get_font_list  # noqa: F401 — used by /comfyfont/fonts route
+from .nodes.comfyfont import ComfyFontNode, get_font_list
 
 log = logging.getLogger(__name__)
 
@@ -65,9 +64,9 @@ def _resolve_edit_path(font_path: str) -> str:
 
 def _convert_ttf_to_ufo(ttf_path: str, ufo_path: str) -> None:
     from fontTools.ttLib import TTFont
-    from .core.library import _ttf_to_ufo
+    from .core.compile import ttf_to_ufo
     tt = TTFont(ttf_path, lazy=False)
-    _ttf_to_ufo(tt, ufo_path)
+    ttf_to_ufo(tt, ufo_path)
     tt.close()
     log.info("Converted %s → %s", ttf_path, ufo_path)
 
@@ -96,10 +95,14 @@ async def _import_font(request: web.Request) -> web.Response:
     """
     Receive a font file upload.
 
-    - Copies the file into comfyfont/fonts/.
-    - If it is a compiled font (TTF/OTF/WOFF), also converts it to a UFO
-      alongside it so the glyph editor can make edits.
-    - Returns {"ok": true, "name": "<filename>", "path": "<absolute path>"}.
+    Supported uploads:
+    - TTF/OTF/WOFF/WOFF2 — copied to workspace; UFO converted alongside it.
+    - UFO (directory) — copied to workspace; TTF compiled alongside it.
+    - ZIP containing a .designspace + UFO masters — extracted into workspace as-is.
+      The .designspace filename is returned as the name.
+    - .designspace alone — copied to workspace (UFO masters must already be present).
+
+    Returns {"ok": true, "name": "<filename>", "path": "<absolute path>"}.
     """
     try:
         reader = await request.multipart()
@@ -127,6 +130,26 @@ async def _import_font(request: web.Request) -> web.Response:
         elif ext == ".ufo" or os.path.isdir(dest_path):
             from .core.compile import compile_ufo_to_ttf
             await loop.run_in_executor(None, compile_ufo_to_ttf, dest_path)
+
+        elif ext == ".zip":
+            # A zip may contain a .designspace + UFO masters.
+            # Extract everything into FONTS_DIR and return the .designspace name.
+            import zipfile
+            ds_name = None
+            with zipfile.ZipFile(dest_path) as zf:
+                zf.extractall(FONTS_DIR)
+                for name in zf.namelist():
+                    if name.endswith(".designspace"):
+                        ds_name = os.path.basename(name)
+            os.remove(dest_path)  # remove the zip after extraction
+            if ds_name is None:
+                return web.json_response(
+                    {"error": "zip contained no .designspace file"}, status=400
+                )
+            filename  = ds_name
+            dest_path = os.path.join(FONTS_DIR, ds_name)
+
+        # .designspace alone: just copy it — UFO masters must already be present.
 
         return web.json_response({"ok": True, "name": filename, "path": dest_path})
 

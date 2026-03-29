@@ -57,12 +57,15 @@ export class GlyphGrid {
    * @param {HTMLElement} container  — the .cf-pane div
    * @param {object}      fontController
    * @param {function}    onGlyphOpen  — called with glyphName on double-click
+   * @param {string}      masterId    — active FontSource identifier (optional)
    */
-  constructor(container, fontController, onGlyphOpen) {
+  constructor(container, fontController, onGlyphOpen, masterId = null) {
     injectGridCSS();
     this._fc = fontController;
     this._onOpen = onGlyphOpen;
+    this._masterId = masterId;
     this._glyphMap = null;   // {name: {unicodes:[...]}}
+    this._renderedCells = new Map(); // glyphName → cell element
 
     this._wrap = document.createElement("div");
     this._wrap.className = "cf-grid-wrap";
@@ -82,6 +85,7 @@ export class GlyphGrid {
 
   async load() {
     this._grid.innerHTML = "";
+    this._renderedCells.clear();
     try {
       this._glyphMap = await this._fc.getGlyphMap();
     } catch (err) {
@@ -125,9 +129,22 @@ export class GlyphGrid {
     }
   }
 
+  /** Switch the active master and re-render all already-loaded cells. */
+  setMaster(masterId) {
+    this._masterId = masterId;
+    for (const [name, cell] of this._renderedCells) {
+      this._paintCell(cell, name);
+    }
+  }
+
   async _renderCell(cell) {
     this._observer.unobserve(cell);
     const name = cell.dataset.glyph;
+    this._renderedCells.set(name, cell);
+    await this._paintCell(cell, name);
+  }
+
+  async _paintCell(cell, name) {
     const canvas = cell.querySelector("canvas");
     if (!canvas) return;
 
@@ -145,8 +162,7 @@ export class GlyphGrid {
       return;
     }
 
-    // defaultLayer is a StaticGlyphController
-    const layer = glyph?.defaultLayer;
+    const layer = glyph?.layerForMaster(this._masterId);
     const path = layer?.path;
     const advance = layer?.xAdvance ?? 1000;
 

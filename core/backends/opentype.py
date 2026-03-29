@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
-from fontTools.pens.pointPen import AbstractPointPen, SegmentToPointPen
+from fontTools.pens.pointPen import AbstractPointPen
 from fontTools.ttLib import TTFont
 
 from ..classes import (
