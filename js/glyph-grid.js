@@ -29,7 +29,6 @@ const CSS = `
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 12px;
   gap: ${GAP}px;
-  padding: ${GAP}px;
   box-sizing: border-box;
 }
 

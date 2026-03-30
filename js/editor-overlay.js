@@ -20,6 +20,7 @@
 import { GlyphGrid } from "./glyph-grid.js";
 import { GlyphEditorTab } from "./glyph-editor-tab.js";
 import { getFontController } from "./font-controller.js";
+import { T, GAP, PANEL_R } from "./theme.js";
 
 // ---------------------------------------------------------------------------
 
@@ -37,16 +38,18 @@ const CSS = `
 #cf-overlay {
   position: fixed; inset: 0; z-index: 9999;
   display: flex; flex-direction: column;
-  background: #1a1a1a; color: #ddd;
+  gap: ${GAP}px; padding: ${GAP}px;
+  background: ${T.bg}; color: #ddd;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 13px;
+  box-sizing: border-box;
 }
 
-/* Header */
+/* Header panel */
 #cf-header {
   display: flex; align-items: center; gap: 8px;
-  padding: 0 12px; height: 44px; min-height: 44px;
-  background: #222; border-bottom: 1px solid #333;
+  padding: 0 14px; height: 44px; min-height: 44px; flex-shrink: 0;
+  background: ${T.panel}; border-radius: ${PANEL_R}px; border: 1.5px solid #2a2a2a;
   user-select: none;
 }
 #cf-title { flex: 1; font-weight: 600; font-size: 13px; color: #eee; }
@@ -78,45 +81,46 @@ const CSS = `
   font-size: 13px; white-space: nowrap; transition: all 0.1s;
 }
 .cf-master-pill:hover { background: #0f2012; color: #5a8f60; border-color: #3a6040; }
-.cf-master-pill.active {
-  background: #0c1f10; color: #34c759;
-  border-color: #34c759;
-}
+.cf-master-pill.active { background: #0c1f10; color: #34c759; border-color: #34c759; }
 
-/* Tab bar */
+/* Tab bar: row of individual panels */
 #cf-tabs {
-  display: flex; align-items: center; gap: 0;
-  height: 36px; min-height: 36px;
-  background: #1e1e1e; border-bottom: 1px solid #333;
+  display: flex; align-items: center; gap: ${GAP}px;
+  height: 36px; min-height: 36px; flex-shrink: 0;
   overflow-x: auto; overflow-y: hidden;
 }
-#cf-tabs::-webkit-scrollbar { height: 3px; }
-#cf-tabs::-webkit-scrollbar-thumb { background: #444; }
-
 .cf-tab {
   display: flex; align-items: center; gap: 6px;
   padding: 0 14px; height: 100%;
-  border-right: 1px solid #2a2a2a;
+  background: ${T.panel}; border-radius: ${PANEL_R}px; border: 1.5px solid #2a2a2a;
   cursor: pointer; white-space: nowrap;
-  color: #888; transition: background 0.1s;
-  font-size: 13px;
+  color: ${T.sidebarText}; font-size: 13px;
+  box-sizing: border-box;
 }
-.cf-tab:hover { background: #282828; color: #ccc; }
-.cf-tab.active { background: #1a1a1a; color: #eee; border-bottom: 2px solid #4a9eff; }
+.cf-tab:hover { color: #ccc; border-color: #3a3a3a; }
+.cf-tab.active { color: #eee; border-color: ${T.accent}; }
 .cf-tab-close {
   background: none; border: none; color: #555; font-size: 13px;
   cursor: pointer; padding: 0; line-height: 1; margin-left: 2px;
 }
 .cf-tab-close:hover { color: #e44; }
 #cf-tab-add {
-  padding: 0 14px; height: 100%; border: none;
-  background: none; color: #555; font-size: 13px; cursor: pointer;
+  padding: 0 14px; height: 100%;
+  background: ${T.panel}; border-radius: ${PANEL_R}px; border: 1.5px solid #2a2a2a;
+  color: #555; font-size: 13px; cursor: pointer; box-sizing: border-box;
 }
-#cf-tab-add:hover { color: #aaa; }
+#cf-tab-add:hover { color: #aaa; border-color: #3a3a3a; }
+#cf-tab-spacer {
+  flex: 1;
+  height: 100%;
+  background: ${T.panel}; border-radius: ${PANEL_R}px; border: 1.5px solid #2a2a2a;
+  box-sizing: border-box;
+  min-width: 0;
+}
 
 /* Content area */
 #cf-content {
-  flex: 1; overflow: hidden; position: relative;
+  flex: 1; overflow: hidden; position: relative; min-height: 0;
 }
 .cf-pane {
   position: absolute; inset: 0;
@@ -387,6 +391,10 @@ class EditorOverlay {
     }
 
     this._tabBar.appendChild(addBtn);
+
+    const spacer = document.createElement("div");
+    spacer.id = "cf-tab-spacer";
+    this._tabBar.appendChild(spacer);
   }
 
   // -------------------------------------------------------------------------

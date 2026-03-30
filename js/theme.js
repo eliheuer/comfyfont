@@ -27,7 +27,7 @@ export const T = {
   labelUnicode:  '#505050',
   labelSelected: '#66ee88',
   sidebarText:   '#808080',
-  headerText:    '#404040',
+  headerText:    '#606060',
   accent:        '#66ee88',
 };
 
