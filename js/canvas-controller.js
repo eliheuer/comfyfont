@@ -84,7 +84,10 @@ export class CanvasController {
     ctx.save();
     ctx.scale(dpr, dpr);
     ctx.translate(this.origin.x / dpr, this.origin.y / dpr);
-    ctx.scale(this.magnification, -this.magnification);
+    // magnification is in physical px/unit; dividing by dpr here means the
+    // effective font→physical-pixel scale is (mag/dpr)*dpr = mag, which matches
+    // what sceneToCanvas() returns (physical px).
+    ctx.scale(this.magnification / dpr, -this.magnification / dpr);
 
     this._drawCallback(ctx, this);
 
@@ -121,15 +124,17 @@ export class CanvasController {
   /** Fit a scene-space bounding box into the canvas with padding. */
   zoomFit(xMin, yMin, xMax, yMax, padding = 40) {
     const dpr = window.devicePixelRatio || 1;
-    const w = this.canvas.width / dpr;
-    const h = this.canvas.height / dpr;
+    const pw = this.canvas.width;   // physical px
+    const ph = this.canvas.height;
     const bw = xMax - xMin;
     const bh = yMax - yMin;
     if (bw === 0 || bh === 0) return;
-    const mag = Math.min((w - padding * 2) / bw, (h - padding * 2) / bh);
+    const pad = padding * dpr;
+    // magnification stored in physical px/unit throughout (consistent with zoomTo/pan/sceneToCanvas)
+    const mag = Math.min((pw - pad * 2) / bw, (ph - pad * 2) / bh);
     this.magnification = mag;
-    this.origin.x = (w - bw * mag) / 2 - xMin * mag;
-    this.origin.y = (h + bh * mag) / 2 + yMin * mag;  // y-flip
+    this.origin.x = (pw - bw * mag) / 2 - xMin * mag;  // physical px
+    this.origin.y = (ph + bh * mag) / 2 + yMin * mag;  // physical px, y-flip
     this.scheduleRedraw();
   }
 

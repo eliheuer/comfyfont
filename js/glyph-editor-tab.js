@@ -1,41 +1,91 @@
 /**
  * glyph-editor-tab.js — Bezier glyph editor for one glyph.
  *
- * Rendered inside a .cf-pane div.  Uses CanvasController for pan/zoom
- * and VisualizationLayers for drawing.
+ * Rendered inside a .cf-pane div. Uses CanvasController for pan/zoom.
  *
  * Options:
  *   onNavigate(glyphName)  — called when user opens an adjacent glyph
+ *   masterId               — initial master/source ID
  */
 
 import { CanvasController } from "./canvas-controller.js";
+import { T, GAP, PANEL_R } from "./theme.js";
 
 // ---------------------------------------------------------------------------
+// Point type constants (PackedPath encoding)
+
+const PT_OFF_QUAD  = 1;
+const PT_OFF_CUBIC = 2;
+// On-curve smooth: types[i] & 0x08 !== 0 (value 8)
+
+// Runebender Xilem point color vocabulary
+const C_CORNER_FILL = '#6AE756';
+const C_CORNER_STK  = '#208E56';
+const C_SMOOTH_FILL = '#579AFF';
+const C_SMOOTH_STK  = '#4428EC';
+const C_OFF_FILL    = '#CC99FF';
+const C_OFF_STK     = '#9900FF';
+const C_SEL_FILL    = '#FFEE55';
+const C_SEL_STK     = '#FFAA33';
+const C_HANDLE      = '#505050';
+
+const HIT_R = 6; // CSS px — pointer hit radius for points
+
+// ---------------------------------------------------------------------------
+// Toolbar tools
+
+const TOOLS = [
+  { id: 'select', icon: '🖱️',  title: 'Select' },
+  { id: 'pen',    icon: '🖊️', title: 'Pen' },
+  { id: 'knife',  icon: '🔪',  title: 'Knife' },
+  { id: 'ruler',  icon: '📏',  title: 'Ruler' },
+  { id: 'hand',   icon: '✋',  title: 'Hand' },
+  { id: 'rotate', icon: '🔄',  title: 'Rotate' },
+  { id: 'text',   icon: '📝',  title: 'Text' },
+];
+
+// ---------------------------------------------------------------------------
+// CSS
 
 const CSS = `
+/* Editor root fills the pane; canvas behind, toolbar floats on top */
 .cf-editor-root {
-  display: flex; flex-direction: column; width: 100%; height: 100%;
-  background: #1a1a1a; overflow: hidden;
+  position: relative; width: 100%; height: 100%;
+  background: ${T.bg}; overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13px; box-sizing: border-box;
 }
+/* Canvas fills the entire pane */
+.cf-editor-canvas-wrap {
+  position: absolute; inset: 0;
+  background: ${T.bg}; overflow: hidden;
+}
+/* Toolbar floats over canvas — top:0 so spacing above = overlay gap only (matches header↔tabs) */
 .cf-editor-toolbar {
-  display: flex; align-items: center; gap: 8px;
-  padding: 4px 12px; min-height: 36px;
-  background: #222; border-bottom: 1px solid #333;
+  position: absolute; top: 0; left: 0; z-index: 1;
+  display: flex; align-items: center; gap: ${GAP}px;
+  pointer-events: none;
+}
+.cf-editor-toolbar > * { pointer-events: auto; }
+.cf-editor-tools {
+  display: flex; align-items: center; gap: 1px;
+  background: ${T.panel}; border: 1.5px solid ${T.border};
+  border-radius: ${PANEL_R}px; padding: 3px 5px;
   flex-shrink: 0;
 }
-.cf-editor-toolbar label { color: #888; font-size: 11px; }
-.cf-editor-toolbar input[type=range] { width: 80px; }
-.cf-editor-spacer { flex: 1; }
-.cf-editor-info { color: #555; font-size: 11px; }
-.cf-editor-canvas-wrap {
-  flex: 1; position: relative; overflow: hidden;
+.cf-editor-tool-btn {
+  background: none; border: none; cursor: pointer;
+  color: #505050;
+  width: 30px; height: 30px; border-radius: 5px;
+  font-size: 16px; display: flex; align-items: center; justify-content: center;
+  transition: background 0.1s;
+  user-select: none;
 }
-.cf-editor-canvas-wrap canvas {
-  position: absolute; inset: 0; width: 100%; height: 100%;
-}
+.cf-editor-tool-btn:hover { background: #272727; color: ${T.sidebarText}; }
+.cf-editor-tool-btn.active { background: #2c2c2c; color: ${T.glyphFill}; }
 `;
 
-function injectEditorCSS() {
+function _injectCSS() {
   if (document.getElementById("cf-editor-css")) return;
   const s = document.createElement("style");
   s.id = "cf-editor-css";
@@ -50,19 +100,56 @@ export class GlyphEditorTab {
    * @param {HTMLElement} container
    * @param {object}      fontController
    * @param {string}      glyphName
-   * @param {{onNavigate: function}} options
+   * @param {{onNavigate?: function, masterId?: string}} options
    */
   constructor(container, fontController, glyphName, options = {}) {
-    injectEditorCSS();
+    _injectCSS();
 
-    this._fc = fontController;
-    this._glyphName = glyphName;
+    this._fc         = fontController;
+    this._glyphName  = glyphName;
     this._onNavigate = options.onNavigate ?? (() => {});
-    this._masterId = options.masterId ?? null;
-    this._glyph = null;
-    this._dirty = false;
+    this._masterId   = options.masterId ?? null;
+    this._glyph      = null;
+    this._fontInfo   = null;
+    this._dirty      = false;
+    this._fittedOnce = false;
+    this._activeTool = 'select';
 
-    // Build DOM
+    // Selection / drag state
+    this._selectedPoints = new Set();
+    this._isDragging     = false;
+    this._dragStart      = null;  // scene coords at drag start
+    this._origCoords     = null;  // Float64Array copy of coords before drag
+
+    // Box-select state
+    this._isBoxing = false;
+    this._boxStart = null;  // CSS px {x, y}
+    this._boxEnd   = null;
+
+    this._buildDOM(container);
+    this._setupPointerHandlers();
+
+    // Hook into CanvasController's resize so zoomFit runs after the canvas
+    // has its real dimensions (ResizeObserver fires AFTER rAF, so rAF-based
+    // delays don't work — intercepting _onResize is the reliable fix).
+    const origResize = this._cc._onResize.bind(this._cc);
+    this._cc._onResize = () => {
+      origResize();
+      // After a real resize (canvas > 400px fallback), fit if not done yet
+      const dpr = window.devicePixelRatio || 1;
+      if (!this._fittedOnce && this._glyph && (this._canvas.width / dpr) > 400) {
+        this._applyZoomFit();
+      }
+    };
+
+    this._keyHandler = (e) => this._onKey(e);
+    document.addEventListener("keydown", this._keyHandler);
+  }
+
+  // -------------------------------------------------------------------------
+  // DOM construction
+
+  _buildDOM(container) {
     const root = document.createElement("div");
     root.className = "cf-editor-root";
 
@@ -70,96 +157,225 @@ export class GlyphEditorTab {
     const toolbar = document.createElement("div");
     toolbar.className = "cf-editor-toolbar";
 
-    const infoEl = document.createElement("span");
-    infoEl.className = "cf-editor-info";
-    infoEl.textContent = glyphName;
-    this._infoEl = infoEl;
+    // Tool pill group
+    const toolsEl = document.createElement("div");
+    toolsEl.className = "cf-editor-tools";
+    this._toolBtns = {};
+    for (const tool of TOOLS) {
+      const btn = document.createElement("button");
+      btn.className = "cf-editor-tool-btn" + (tool.id === this._activeTool ? " active" : "");
+      btn.textContent = tool.icon;
+      btn.title = tool.title;
+      btn.onclick = () => this._setTool(tool.id);
+      toolsEl.appendChild(btn);
+      this._toolBtns[tool.id] = btn;
+    }
 
-    const spacer = document.createElement("div");
-    spacer.className = "cf-editor-spacer";
+    toolbar.appendChild(toolsEl);
 
-    // Zoom label + slider
-    const zoomLabel = document.createElement("label");
-    zoomLabel.textContent = "Zoom";
-    const zoomSlider = document.createElement("input");
-    zoomSlider.type = "range";
-    zoomSlider.min = "0.05";
-    zoomSlider.max = "8";
-    zoomSlider.step = "0.01";
-    zoomSlider.value = "1";
-    this._zoomSlider = zoomSlider;
-
-    toolbar.appendChild(infoEl);
-    toolbar.appendChild(spacer);
-    toolbar.appendChild(zoomLabel);
-    toolbar.appendChild(zoomSlider);
-
-    // Canvas wrapper
+    // Canvas area (fills root) with toolbar floating on top
     const canvasWrap = document.createElement("div");
     canvasWrap.className = "cf-editor-canvas-wrap";
-
     const canvas = document.createElement("canvas");
     canvasWrap.appendChild(canvas);
 
-    root.appendChild(toolbar);
     root.appendChild(canvasWrap);
+    root.appendChild(toolbar);
     container.appendChild(root);
 
-    this._root = root;
+    this._root   = root;
     this._canvas = canvas;
+    this._cc = new CanvasController(canvas, (ctx) => this._draw(ctx));
+  }
 
-    // CanvasController calls _draw() and handles HiDPI resize
-    this._cc = new CanvasController(canvas, () => this._draw());
-
-    // Zoom slider → canvas
-    zoomSlider.addEventListener("input", () => {
-      this._cc.zoomTo(parseFloat(zoomSlider.value));
-    });
-
-    // Monkey-patch scheduleRedraw to sync slider when zoom changes via wheel
-    const origSchedule = this._cc.scheduleRedraw.bind(this._cc);
-    this._cc.scheduleRedraw = () => {
-      zoomSlider.value = String(Math.round(this._cc.magnification * 100) / 100);
-      origSchedule();
-    };
-
-    // Click on point — future: select/drag
-    canvas.addEventListener("click", (e) => this._onClick(e));
+  _setTool(id) {
+    this._activeTool = id;
+    for (const [tid, btn] of Object.entries(this._toolBtns)) {
+      btn.classList.toggle("active", tid === id);
+    }
   }
 
   // -------------------------------------------------------------------------
+  // Pointer event handling (selection + drag)
+
+  _setupPointerHandlers() {
+    const canvas = this._canvas;
+
+    canvas.addEventListener("pointerdown", (e) => {
+      // CanvasController owns alt+drag (pan) and middle-click — skip those
+      if (e.button !== 0 || e.altKey) return;
+      if (this._activeTool !== "select") return;
+
+      const idx = this._hitTestPoint(e.clientX, e.clientY);
+      if (idx >= 0) {
+        // Hit a point — start drag
+        if (!e.shiftKey && !this._selectedPoints.has(idx)) {
+          this._selectedPoints.clear();
+        }
+        this._selectedPoints.add(idx);
+
+        this._isDragging = true;
+        this._dragStart  = this._cc.eventToScene(e);
+        const layer = this._defaultLayer();
+        this._origCoords = Float64Array.from(layer?.path?.coordinates ?? []);
+
+        canvas.setPointerCapture(e.pointerId);
+        e.stopPropagation();
+        this._cc.scheduleRedraw();
+      } else {
+        // Empty space — start box select
+        if (!e.shiftKey) this._selectedPoints.clear();
+
+        const rect = canvas.getBoundingClientRect();
+        this._isBoxing = true;
+        this._boxStart = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+        this._boxEnd   = { ...this._boxStart };
+
+        canvas.setPointerCapture(e.pointerId);
+        e.stopPropagation();
+        this._cc.scheduleRedraw();
+      }
+    });
+
+    canvas.addEventListener("pointermove", (e) => {
+      if (this._isDragging) {
+        const cur = this._cc.eventToScene(e);
+        const dx = cur.x - this._dragStart.x;
+        const dy = cur.y - this._dragStart.y;
+
+        const layer = this._defaultLayer();
+        const coords = layer?.path?.coordinates;
+        if (coords) {
+          for (const idx of this._selectedPoints) {
+            coords[idx * 2]     = this._origCoords[idx * 2]     + dx;
+            coords[idx * 2 + 1] = this._origCoords[idx * 2 + 1] + dy;
+          }
+          this._dirty = true;
+          this._cc.scheduleRedraw();
+        }
+      } else if (this._isBoxing) {
+        const rect = canvas.getBoundingClientRect();
+        this._boxEnd = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+        this._cc.scheduleRedraw();
+      }
+    });
+
+    canvas.addEventListener("pointerup", () => {
+      if (this._isDragging) {
+        this._isDragging = false;
+        this._dragStart  = null;
+        this._origCoords = null;
+        this._updateInfo();
+      } else if (this._isBoxing) {
+        this._finishBoxSelect();
+        this._isBoxing = false;
+        this._boxStart = null;
+        this._boxEnd   = null;
+        this._cc.scheduleRedraw();
+      }
+    });
+
+    canvas.addEventListener("pointerleave", () => {
+      if (this._isBoxing) {
+        this._isBoxing = false;
+        this._boxStart = null;
+        this._boxEnd   = null;
+        this._cc.scheduleRedraw();
+      }
+    });
+  }
+
+  _hitTestPoint(clientX, clientY) {
+    const layer  = this._defaultLayer();
+    const coords = layer?.path?.coordinates ?? [];
+    const cc  = this._cc;
+    const dpr = window.devicePixelRatio || 1;
+    const rect = this._canvas.getBoundingClientRect();
+    const sx = clientX - rect.left;
+    const sy = clientY - rect.top;
+
+    for (let i = 0; i < coords.length / 2; i++) {
+      const { x: cx, y: cy } = cc.sceneToCanvas(coords[i * 2], coords[i * 2 + 1]);
+      if (Math.hypot(sx - cx / dpr, sy - cy / dpr) < HIT_R) return i;
+    }
+    return -1;
+  }
+
+  _finishBoxSelect() {
+    if (!this._boxStart || !this._boxEnd) return;
+    const cc  = this._cc;
+    const dpr = window.devicePixelRatio || 1;
+
+    const x0 = Math.min(this._boxStart.x, this._boxEnd.x);
+    const y0 = Math.min(this._boxStart.y, this._boxEnd.y);
+    const x1 = Math.max(this._boxStart.x, this._boxEnd.x);
+    const y1 = Math.max(this._boxStart.y, this._boxEnd.y);
+
+    // CSS px → canvas px → scene coords (y-flip handled by canvasToScene)
+    const s0 = cc.canvasToScene(x0 * dpr, y0 * dpr);
+    const s1 = cc.canvasToScene(x1 * dpr, y1 * dpr);
+    const sceneXMin = Math.min(s0.x, s1.x);
+    const sceneXMax = Math.max(s0.x, s1.x);
+    const sceneYMin = Math.min(s0.y, s1.y);
+    const sceneYMax = Math.max(s0.y, s1.y);
+
+    const layer  = this._defaultLayer();
+    const coords = layer?.path?.coordinates ?? [];
+    for (let i = 0; i < coords.length / 2; i++) {
+      const px = coords[i * 2], py = coords[i * 2 + 1];
+      if (px >= sceneXMin && px <= sceneXMax && py >= sceneYMin && py <= sceneYMax) {
+        this._selectedPoints.add(i);
+      }
+    }
+  }
+
+  _onKey(e) {
+    if (e.key === "Escape" && this._selectedPoints.size > 0) {
+      this._selectedPoints.clear();
+      this._cc.scheduleRedraw();
+      e.stopPropagation();
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Lifecycle
 
   async load() {
     try {
-      this._glyph = await this._fc.getGlyph(this._glyphName);
+      [this._glyph, this._fontInfo] = await Promise.all([
+        this._fc.getGlyph(this._glyphName),
+        this._fc.getFontInfo().catch(() => null),
+      ]);
     } catch (err) {
-      this._infoEl.textContent = `${this._glyphName} — load error: ${err.message}`;
+      console.error(`ComfyFont: ${this._glyphName} — load error:`, err);
       return;
     }
 
-    // Gather path + metrics for the default layer (StaticGlyphController)
-    const layer = this._defaultLayer();
-    const advance = layer?.xAdvance ?? 1000;
-
-    // Fit glyph into view
-    const upm = advance > 0 ? advance : 1000;
-    this._cc.zoomFit(0, -200, advance, upm, 32);
-
     this._updateInfo();
-    this._draw();
+    // Try to fit now; if canvas isn't sized yet the _onResize hook will retry.
+    this._applyZoomFit();
+  }
+
+  _applyZoomFit() {
+    const dpr = window.devicePixelRatio || 1;
+    // CanvasController uses 400×400 as a fallback when the canvas parent has
+    // no size yet (pane is display:none).  Skip fitting until the pane is
+    // visible and the canvas has its real dimensions (> 400 CSS px wide).
+    if ((this._canvas.width / dpr) <= 400) return;
+    const layer     = this._defaultLayer();
+    const advance   = layer?.xAdvance ?? 1000;
+    const info      = this._fontInfo;
+    const ascender  = info?.ascender  ?? 800;
+    const descender = info?.descender ?? -200;
+    this._cc.zoomFit(0, descender, Math.max(advance, 1), ascender, 40);
+    this._fittedOnce = true;
   }
 
   async save() {
     if (!this._dirty || !this._glyph) return;
-    // editFinal sends the full glyph back to the server
     try {
       const layer = this._defaultLayer();
-      await this._fc.editFinal(
-        this._glyphName,
-        null,
-        { "=": ["layers", layer] },
-        false
-      );
+      await this._fc.editFinal(this._glyphName, null, { "=": ["layers", layer] }, false);
       this._dirty = false;
       this._updateInfo();
     } catch (err) {
@@ -168,150 +384,122 @@ export class GlyphEditorTab {
   }
 
   onActivated() {
-    // Redraw in case canvas was resized while inactive
+    // Try to fit if data is ready and canvas is now properly sized.
+    // _applyZoomFit guards against the 400px fallback and sets _fittedOnce.
+    if (this._glyph && !this._fittedOnce) this._applyZoomFit();
     this._cc.scheduleRedraw();
   }
 
   destroy() {
     this._cc.destroy?.();
+    document.removeEventListener("keydown", this._keyHandler);
+  }
+
+  setMaster(masterId) {
+    this._masterId = masterId;
+    this._selectedPoints.clear();
+    this._cc.scheduleRedraw();
+    this._updateInfo();
   }
 
   // -------------------------------------------------------------------------
-  // Drawing
+  // Drawing — pixel space (reset CanvasController's y-flip transform)
 
-  // Called by CanvasController — ctx has the DPR scale applied but NOT the y-flip
-  // (the controller's draw() applies the y-flip transform before calling here,
-  //  but we draw in pixel/canvas space using sceneToCanvas manually, so restore first)
-  _draw() {
-    const canvas = this._canvas;
-    // CanvasController already sized the canvas and called clearRect before our callback
-    const ctx = canvas.getContext("2d");
-
-    // We draw in raw canvas pixel space (not the y-flipped scene transform)
+  _draw(ctx) {
     ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0); // reset to pixel space
+    ctx.setTransform(1, 0, 0, 1, 0, 0); // draw in raw canvas pixel space
 
     const layer = this._defaultLayer();
     if (!layer) { ctx.restore(); return; }
 
-    const advance = layer?.xAdvance ?? 1000;
-    const upm = 1000; // TODO: read from fontInfo
+    const advance = layer.xAdvance ?? 1000;
 
-    this._drawMetrics(ctx, advance, upm);
+    this._drawMetrics(ctx, advance);
 
-    const path = layer?.path;
+    const path = layer.path;
     if (path?.coordinates?.length) {
       this._drawOutline(ctx, path);
+      this._drawHandles(ctx, path);
       this._drawNodes(ctx, path);
+    }
+
+    if (this._isBoxing && this._boxStart && this._boxEnd) {
+      this._drawBoxSelect(ctx);
     }
 
     ctx.restore();
   }
 
-  _drawMetrics(ctx, advance, upm) {
-    const cc = this._cc;
+  _drawMetrics(ctx, advance) {
+    const cc   = this._cc;
+    const info = this._fontInfo;
 
-    // Baseline, ascender, descender lines
+    const ascender  = info?.ascender  ?? 800;
+    const descender = info?.descender ?? -200;
+    const xHeight   = info?.xHeight   ?? 500;
+    const capHeight = info?.capHeight  ?? 700;
+
+    // Glyph metrics rectangle (Runebender style) — thin box bounding the em square
+    const { x: rxMin, y: ryTop } = cc.sceneToCanvas(0,       ascender);
+    const { x: rxMax, y: ryBot } = cc.sceneToCanvas(advance, descender);
+    ctx.strokeStyle = 'rgba(255,255,255,0.20)';
+    ctx.lineWidth = 1;
+    ctx.globalAlpha = 1;
+    ctx.strokeRect(rxMin, ryTop, rxMax - rxMin, ryBot - ryTop);
+
+    // Horizontal metric subdivisions clipped to rectangle width
     const metrics = [
-      { y: 0,    color: "#3a3a3a" },
-      { y: 800,  color: "#2a3a2a" },
-      { y: -200, color: "#3a2a2a" },
-      { y: 700,  color: "#2a2e3a" },
-      { y: 500,  color: "#2a2e3a" },
+      { y: capHeight, alpha: 0.18 },
+      { y: xHeight,   alpha: 0.18 },
+      { y: 0,         alpha: 0.35 },  // baseline
     ];
-
-    const cw = ctx.canvas.width;
     for (const m of metrics) {
       const { y: cy } = cc.sceneToCanvas(0, m.y);
       ctx.beginPath();
-      ctx.moveTo(0, cy);
-      ctx.lineTo(cw, cy);
-      ctx.strokeStyle = m.color;
-      ctx.lineWidth = 1;
+      ctx.moveTo(rxMin, cy);
+      ctx.lineTo(rxMax, cy);
+      ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+      ctx.globalAlpha = m.alpha;
       ctx.stroke();
     }
-
-    // Left sidebearing & advance width verticals
-    for (const sx of [0, advance]) {
-      const { x: cx } = cc.sceneToCanvas(sx, 0);
-      const ch = ctx.canvas.height;
-      ctx.beginPath();
-      ctx.moveTo(cx, 0);
-      ctx.lineTo(cx, ch);
-      ctx.strokeStyle = "#2e3a2e";
-      ctx.lineWidth = 1;
-      ctx.stroke();
-    }
+    ctx.globalAlpha = 1;
   }
 
-  _drawOutline(ctx, packed) {
-    const p2d = _buildPath2D(packed, this._cc);
-    ctx.fillStyle = "rgba(200,200,220,0.15)";
-    ctx.strokeStyle = "#8899cc";
+  _drawOutline(ctx, path) {
+    const p2d = _buildPath2D(path, this._cc);
+    ctx.fillStyle = "rgba(255,255,255,0.07)";
+    ctx.strokeStyle = T.glyphFill;
     ctx.lineWidth = 1.5;
     ctx.fill(p2d, "nonzero");
     ctx.stroke(p2d);
   }
 
-  _drawNodes(ctx, packed) {
-    const coords = packed.coordinates ?? [];
-    const types = packed.pointTypes ?? [];
+  _drawHandles(ctx, path) {
+    const coords   = path.coordinates ?? [];
+    const types    = path.pointTypes  ?? [];
+    const contours = path.contourInfo ?? [];
     const cc = this._cc;
-    const dpr = window.devicePixelRatio || 1;
-    const R_ON = 4 * dpr;
-    const R_OFF = 3 * dpr;
 
-    for (let i = 0; i < types.length; i++) {
-      const sx = coords[i * 2];
-      const sy = coords[i * 2 + 1];
-      const { x: cx, y: cy } = cc.sceneToCanvas(sx, sy);
-      const t = types[i] & 0x0f;
-
-      ctx.beginPath();
-      if (t === 0x01 || t === 0x02) {
-        // Off-curve: circle
-        ctx.arc(cx, cy, R_OFF, 0, Math.PI * 2);
-        ctx.fillStyle = "#4477aa";
-      } else {
-        // On-curve: square
-        ctx.rect(cx - R_ON / 2, cy - R_ON / 2, R_ON, R_ON);
-        const smooth = (types[i] & 0x08) !== 0;
-        ctx.fillStyle = smooth ? "#66aaff" : "#aaddff";
-      }
-      ctx.fill();
-    }
-
-    // Draw handles (lines from on-curve to adjacent off-curves)
-    this._drawHandles(ctx, packed);
-  }
-
-  _drawHandles(ctx, packed) {
-    const coords = packed.coordinates ?? [];
-    const types = packed.pointTypes ?? [];
-    const contours = packed.contourInfo ?? [];
-    const cc = this._cc;
-    const dpr = window.devicePixelRatio || 1;
-
-    ctx.strokeStyle = "#334466";
-    ctx.lineWidth = 1 * dpr;
+    ctx.strokeStyle = C_HANDLE;
+    ctx.lineWidth = 1;
 
     let ci = 0;
     for (const { endPoint } of contours) {
-      const pts = [];
-      for (let i = ci; i <= endPoint; i++) {
-        pts.push({ x: coords[i * 2], y: coords[i * 2 + 1], t: types[i] & 0x0f });
-      }
-      const n = pts.length;
-      for (let i = 0; i < n; i++) {
-        const cur = pts[i];
-        if (cur.t === 0x01 || cur.t === 0x02) {
-          // Find nearest on-curve neighbours
-          const prev = pts[(i - 1 + n) % n];
-          const { x: cx, y: cy } = cc.sceneToCanvas(cur.x, cur.y);
-          const { x: px, y: py } = cc.sceneToCanvas(prev.x, prev.y);
+      const n = endPoint - ci + 1;
+      for (let k = 0; k < n; k++) {
+        const i    = ci + k;
+        const base = types[i] & 0x0f;
+        if (base !== PT_OFF_QUAD && base !== PT_OFF_CUBIC) continue;
+
+        const { x: cx, y: cy } = cc.sceneToCanvas(coords[i * 2], coords[i * 2 + 1]);
+
+        // Draw line to each adjacent point (both prev and next in contour)
+        for (const delta of [-1, 1]) {
+          const j = ci + (k + delta + n) % n;
+          const { x: nx, y: ny } = cc.sceneToCanvas(coords[j * 2], coords[j * 2 + 1]);
           ctx.beginPath();
           ctx.moveTo(cx, cy);
-          ctx.lineTo(px, py);
+          ctx.lineTo(nx, ny);
           ctx.stroke();
         }
       }
@@ -319,40 +507,83 @@ export class GlyphEditorTab {
     }
   }
 
+  _drawNodes(ctx, path) {
+    const coords   = path.coordinates ?? [];
+    const types    = path.pointTypes  ?? [];
+    const cc  = this._cc;
+    const dpr = window.devicePixelRatio || 1;
+    const R_ON  = 4 * dpr;
+    const R_OFF = 3 * dpr;
+
+    for (let i = 0; i < types.length; i++) {
+      const sx = coords[i * 2], sy = coords[i * 2 + 1];
+      const { x: cx, y: cy } = cc.sceneToCanvas(sx, sy);
+      const base   = types[i] & 0x0f;
+      const smooth = (types[i] & 0x08) !== 0;
+      const isOff  = base === PT_OFF_QUAD || base === PT_OFF_CUBIC;
+      const sel    = this._selectedPoints.has(i);
+
+      let fill, stroke, r;
+      if (sel) {
+        fill = C_SEL_FILL;    stroke = C_SEL_STK;    r = R_ON;
+      } else if (isOff) {
+        fill = C_OFF_FILL;    stroke = C_OFF_STK;    r = R_OFF;
+      } else if (smooth) {
+        fill = C_SMOOTH_FILL; stroke = C_SMOOTH_STK; r = R_ON;
+      } else {
+        fill = C_CORNER_FILL; stroke = C_CORNER_STK; r = R_ON;
+      }
+
+      ctx.beginPath();
+      if (isOff || smooth || sel) {
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      } else {
+        // Corner on-curve: square
+        ctx.rect(cx - r, cy - r, r * 2, r * 2);
+      }
+      ctx.fillStyle = fill;
+      ctx.fill();
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+  }
+
+  _drawBoxSelect(ctx) {
+    const dpr = window.devicePixelRatio || 1;
+    const x0 = Math.min(this._boxStart.x, this._boxEnd.x) * dpr;
+    const y0 = Math.min(this._boxStart.y, this._boxEnd.y) * dpr;
+    const w  = Math.abs(this._boxEnd.x - this._boxStart.x) * dpr;
+    const h  = Math.abs(this._boxEnd.y - this._boxStart.y) * dpr;
+
+    ctx.globalAlpha = 0.7;
+    ctx.strokeStyle = T.accent;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x0, y0, w, h);
+    ctx.globalAlpha = 0.06;
+    ctx.fillStyle = T.accent;
+    ctx.fillRect(x0, y0, w, h);
+    ctx.globalAlpha = 1;
+  }
+
   // -------------------------------------------------------------------------
-
-  _onClick(e) {
-    // Future: hit-test points for selection
-    void e;
-  }
-
-  setMaster(masterId) {
-    this._masterId = masterId;
-    this._draw();
-    this._updateInfo();
-  }
 
   _defaultLayer() {
     return this._glyph?.layerForMaster(this._masterId) ?? null;
   }
 
   _updateInfo() {
-    const layer = this._defaultLayer();
-    const adv = layer?.xAdvance;
-    const pts = (layer?.path?.coordinates?.length ?? 0) / 2;
-    const dirty = this._dirty ? " ●" : "";
-    this._infoEl.textContent =
-      `${this._glyphName}  |  advance: ${adv ?? "?"}  |  nodes: ${Math.round(pts)}${dirty}`;
+    // Info bar removed — nothing to update.
   }
 }
 
 // ---------------------------------------------------------------------------
-// Path2D builder (scene coords → canvas coords via CanvasController)
+// Path2D builder — converts scene (font) coordinates to canvas coordinates
 
 function _buildPath2D(packed, cc) {
-  const p2d = new Path2D();
-  const coords = packed.coordinates ?? [];
-  const types = packed.pointTypes ?? [];
+  const p2d    = new Path2D();
+  const coords   = packed.coordinates ?? [];
+  const types    = packed.pointTypes  ?? [];
   const contours = packed.contourInfo ?? [];
 
   let ci = 0;
@@ -368,16 +599,16 @@ function _buildPath2D(packed, cc) {
   return p2d;
 }
 
-const OFF_CURVE_QUAD  = 0x01;
-const OFF_CURVE_CUBIC = 0x02;
+const OFF_QUAD  = 1;
+const OFF_CUBIC = 2;
 
 function _drawContour(p2d, pts, isClosed) {
   if (pts.length === 0) return;
 
-  let startIdx = pts.findIndex((p) => p.t !== OFF_CURVE_QUAD && p.t !== OFF_CURVE_CUBIC);
+  let startIdx = pts.findIndex((p) => p.t !== OFF_QUAD && p.t !== OFF_CUBIC);
   if (startIdx === -1) startIdx = 0;
 
-  const n = pts.length;
+  const n  = pts.length;
   const at = (i) => pts[(startIdx + i) % n];
 
   p2d.moveTo(at(0).x, at(0).y);
@@ -385,14 +616,14 @@ function _drawContour(p2d, pts, isClosed) {
   let i = 1;
   while (i < n) {
     const cur = at(i);
-    if (cur.t === OFF_CURVE_CUBIC) {
+    if (cur.t === OFF_CUBIC) {
       const c1 = cur, c2 = at(i + 1), ep = at(i + 2);
       p2d.bezierCurveTo(c1.x, c1.y, c2.x, c2.y, ep.x, ep.y);
       i += 3;
-    } else if (cur.t === OFF_CURVE_QUAD) {
+    } else if (cur.t === OFF_QUAD) {
       const offCurves = [cur];
       let j = i + 1;
-      while (j < n && at(j).t === OFF_CURVE_QUAD) { offCurves.push(at(j)); j++; }
+      while (j < n && at(j).t === OFF_QUAD) { offCurves.push(at(j)); j++; }
       const on = at(j);
       for (let k = 0; k < offCurves.length; k++) {
         const cp = offCurves[k];
