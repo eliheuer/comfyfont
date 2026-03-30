@@ -19,7 +19,8 @@ export const PANEL_R  = 8;   // px — border-radius for all panels and cells
 export const T = {
   bg:            '#101010',
   panel:         '#1c1c1c',
-  cellOutline:   '#606060',
+  border:        '#383838',  // unified outline for all panels and cells
+  cellOutline:   '#383838',
   cellSelected:  '#66ee88',
   glyphFill:     '#a0a0a0',
   glyphSelected: '#66ee88',
@@ -35,13 +36,13 @@ export const T = {
 // Mark color palette — from Runebender theme.rs
 
 export const MARK_COLORS = [
-  { hex: '#FF5533', rgba: '1,0.333,0.2,1',       label: 'red'    },
-  { hex: '#FF9911', rgba: '1,0.6,0.067,1',        label: 'orange' },
-  { hex: '#CCDD00', rgba: '0.8,0.867,0,1',        label: 'yellow' },
-  { hex: '#44DD44', rgba: '0.267,0.867,0.267,1',  label: 'green'  },
-  { hex: '#00CCBB', rgba: '0,0.8,0.733,1',        label: 'teal'   },
-  { hex: '#9944CC', rgba: '0.6,0.267,0.8,1',      label: 'purple' },
-  { hex: '#CC44AA', rgba: '0.8,0.267,0.667,1',    label: 'pink'   },
+  { hex: '#FF4040', rgba: '1,0.251,0.251,1',       label: 'red'    },
+  { hex: '#FF9933', rgba: '1,0.6,0.2,1',           label: 'orange' },
+  { hex: '#FFDD33', rgba: '1,0.867,0.2,1',         label: 'yellow' },
+  { hex: '#44BB44', rgba: '0.267,0.733,0.267,1',   label: 'green'  },
+  { hex: '#1E50C8', rgba: '0.118,0.314,0.784,1',   label: 'blue'   },
+  { hex: '#9955DD', rgba: '0.6,0.333,0.867,1',     label: 'purple' },
+  { hex: '#DD55AA', rgba: '0.867,0.333,0.667,1',   label: 'pink'   },
 ];
 
 // ---------------------------------------------------------------------------

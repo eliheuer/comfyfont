@@ -39,7 +39,7 @@ const CSS = `
   position: fixed; inset: 0; z-index: 9999;
   display: flex; flex-direction: column;
   gap: ${GAP}px; padding: ${GAP}px;
-  background: ${T.bg}; color: #ddd;
+  background: ${T.bg}; color: ${T.glyphFill};
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 13px;
   box-sizing: border-box;
@@ -49,39 +49,37 @@ const CSS = `
 #cf-header {
   display: flex; align-items: center; gap: 8px;
   padding: 0 14px; height: 44px; min-height: 44px; flex-shrink: 0;
-  background: ${T.panel}; border-radius: ${PANEL_R}px; border: 1.5px solid #2a2a2a;
+  background: ${T.panel}; border-radius: ${PANEL_R}px; border: 1.5px solid ${T.border};
   user-select: none;
 }
-#cf-title { flex: 1; font-weight: 600; font-size: 13px; color: #eee; }
+#cf-title { flex: 1; font-weight: 600; font-size: 13px; color: ${T.glyphFill}; }
 #cf-save-btn {
-  background: #0c1f10; color: #34c759; border: 1px solid #34c759;
+  background: none; color: ${T.sidebarText}; border: 1px solid ${T.border};
   padding: 3px 14px; border-radius: 12px; cursor: pointer; font-size: 13px;
-  white-space: nowrap; font-weight: 500;
+  white-space: nowrap; font-weight: 500; transition: color 0.1s, border-color 0.1s, background 0.1s;
 }
-#cf-save-btn:hover { background: #122a18; }
-#cf-save-btn.multi-master {
-  background: #1f1800; color: #c8960c; border-color: #c8960c;
-}
-#cf-save-btn.multi-master:hover { background: #2a2000; }
+#cf-save-btn:hover { background: #122a18; color: #34c759; border-color: #34c759; }
+#cf-save-btn.multi-master:hover { background: #2a2000; color: #c8960c; border-color: #c8960c; }
 #cf-close-btn {
-  background: #1f0c0c; color: #c0392b; border: 1px solid #c0392b;
+  background: none; color: ${T.sidebarText}; border: 1px solid ${T.border};
   border-radius: 50%; width: 24px; height: 24px; min-width: 24px;
   cursor: pointer; padding: 0; font-size: 13px; font-weight: 500;
   display: flex; align-items: center; justify-content: center;
+  transition: color 0.1s, border-color 0.1s, background 0.1s;
 }
-#cf-close-btn:hover { background: #2e1010; }
+#cf-close-btn:hover { background: #2e1010; color: #c0392b; border-color: #c0392b; }
 
 /* Master pills */
 #cf-masters {
   display: flex; align-items: center; gap: 4px;
 }
 .cf-master-pill {
-  background: #0c180e; color: #4a7a50; border: 1px solid #2a4a2e;
+  background: none; color: ${T.sidebarText}; border: 1px solid ${T.border};
   padding: 3px 10px; border-radius: 12px; cursor: pointer;
-  font-size: 13px; white-space: nowrap; transition: all 0.1s;
+  font-size: 13px; white-space: nowrap; transition: color 0.1s, border-color 0.1s, background 0.1s;
 }
 .cf-master-pill:hover { background: #0f2012; color: #5a8f60; border-color: #3a6040; }
-.cf-master-pill.active { background: #0c1f10; color: #34c759; border-color: #34c759; }
+.cf-master-pill.active { color: ${T.glyphFill}; border-color: #666; }
 
 /* Tab bar: row of individual panels */
 #cf-tabs {
@@ -92,13 +90,13 @@ const CSS = `
 .cf-tab {
   display: flex; align-items: center; gap: 6px;
   padding: 0 14px; height: 100%;
-  background: ${T.panel}; border-radius: ${PANEL_R}px; border: 1.5px solid #2a2a2a;
+  background: ${T.panel}; border-radius: ${PANEL_R}px; border: 1.5px solid ${T.border};
   cursor: pointer; white-space: nowrap;
   color: ${T.sidebarText}; font-size: 13px;
   box-sizing: border-box;
 }
-.cf-tab:hover { color: #ccc; border-color: #3a3a3a; }
-.cf-tab.active { color: #eee; border-color: ${T.accent}; }
+.cf-tab:hover { color: ${T.glyphFill}; border-color: #5a5a5a; }
+.cf-tab.active { color: ${T.glyphFill}; border-color: #666; }
 .cf-tab-close {
   background: none; border: none; color: #555; font-size: 13px;
   cursor: pointer; padding: 0; line-height: 1; margin-left: 2px;
@@ -106,14 +104,14 @@ const CSS = `
 .cf-tab-close:hover { color: #e44; }
 #cf-tab-add {
   padding: 0 14px; height: 100%;
-  background: ${T.panel}; border-radius: ${PANEL_R}px; border: 1.5px solid #2a2a2a;
+  background: ${T.panel}; border-radius: ${PANEL_R}px; border: 1.5px solid ${T.border};
   color: #555; font-size: 13px; cursor: pointer; box-sizing: border-box;
 }
-#cf-tab-add:hover { color: #aaa; border-color: #3a3a3a; }
+#cf-tab-add:hover { color: #aaa; border-color: #5a5a5a; }
 #cf-tab-spacer {
   flex: 1;
   height: 100%;
-  background: ${T.panel}; border-radius: ${PANEL_R}px; border: 1.5px solid #2a2a2a;
+  background: ${T.panel}; border-radius: ${PANEL_R}px; border: 1.5px solid ${T.border};
   box-sizing: border-box;
   min-width: 0;
 }

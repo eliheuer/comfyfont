@@ -25,7 +25,7 @@ const CSS = `
   height: 100%;
   overflow: hidden;
   background: ${T.bg};
-  color: #ccc;
+  color: ${T.glyphFill};
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 12px;
   gap: ${GAP}px;
@@ -39,13 +39,22 @@ const CSS = `
   display: flex;
   flex-direction: column;
   gap: ${GAP}px;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 .cf-sidebar-box {
   background: ${T.panel};
   border-radius: ${PANEL_R}px;
-  border: 1.5px solid #2a2a2a;
+  border: 1.5px solid ${T.border};
   padding: 10px 0;
   overflow: hidden;
+  flex-shrink: 0;
+}
+/* GF Character Sets: scrollable so Colors box is always reachable */
+.cf-sidebar-box.cf-gfsets-box {
+  flex-shrink: 1;
+  overflow-y: auto;
+  max-height: 220px;
 }
 .cf-sidebar-header {
   font-size: 12px;
@@ -61,7 +70,7 @@ const CSS = `
   user-select: none;
   transition: color 0.1s;
 }
-.cf-cat-item:hover { color: #bbb; }
+.cf-cat-item:hover { color: ${T.glyphFill}; }
 .cf-cat-item.active {
   color: ${T.accent};
   box-shadow: inset 2px 0 0 ${T.accent};
@@ -107,7 +116,8 @@ const CSS = `
 }
 /* Hover: use mark color when set, else #888 */
 .cf-cell:hover { border-color: var(--cell-border, #888); }
-.cf-cell.selected { border-color: ${T.cellSelected}; }
+/* Selected: use mark color if present, else accent */
+.cf-cell.selected { border-color: var(--cell-border, ${T.cellSelected}); }
 
 .cf-cell-preview {
   flex: 1;
@@ -171,7 +181,7 @@ const CSS = `
 .cf-info-box {
   background: ${T.panel};
   border-radius: ${PANEL_R}px;
-  border: 1.5px solid #2a2a2a;
+  border: 1.5px solid ${T.border};
   padding: 14px;
   display: flex;
   flex-direction: column;
@@ -182,41 +192,42 @@ const CSS = `
   font-size: 12px;
   color: ${T.headerText};
 }
-.cf-info-value { font-size: 12px; color: #bbb; }
+.cf-info-value { font-size: 12px; color: ${T.glyphFill}; }
 .cf-info-hint  { color: #444; font-size: 12px; padding: 4px 0; }
 
 /* ---- Color swatches ---- */
 .cf-colors-row {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 6px 12px 2px;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  padding: 6px 12px 10px;
 }
 .cf-color-clear {
-  width: 22px; height: 22px;
-  border-radius: 4px;
+  aspect-ratio: 1;
+  width: 100%;
+  border-radius: 50%;
   border: 1.5px solid #444;
   background: none;
   cursor: pointer;
   appearance: none;
   display: flex; align-items: center; justify-content: center;
-  color: #555; font-size: 12px; line-height: 1;
-  flex-shrink: 0; padding: 0;
+  color: #555; font-size: 11px; line-height: 1;
+  padding: 0;
   transition: border-color 0.1s, color 0.1s;
 }
 .cf-color-clear:hover { border-color: #888; color: #aaa; }
 .cf-color-clear.active { border-color: ${T.accent}; color: ${T.accent}; }
 .cf-color-swatch {
-  width: 22px; height: 22px;
-  border-radius: 4px;
+  aspect-ratio: 1;
+  width: 100%;
+  border-radius: 50%;
   border: 2px solid transparent;
+  outline: 2px solid ${T.bg};
   cursor: pointer;
   appearance: none;
-  flex-shrink: 0;
   transition: transform 0.1s, border-color 0.1s;
 }
-.cf-color-swatch:hover { transform: scale(1.15); }
+.cf-color-swatch:hover { transform: scale(1.1); }
 .cf-color-swatch.active { border-color: ${T.accent}; }
 
 /* ---- GF character sets ---- */
@@ -538,11 +549,11 @@ export class GlyphGrid {
     this._catBoxEl = box;
     sidebar.appendChild(box);
 
-    // Colors section
-    sidebar.appendChild(this._buildColorsBox());
-
     // GF Character Sets section
     sidebar.appendChild(this._buildGFSetsBox());
+
+    // Colors section
+    sidebar.appendChild(this._buildColorsBox());
 
     return sidebar;
   }
@@ -589,7 +600,7 @@ export class GlyphGrid {
 
   _buildGFSetsBox() {
     const box = document.createElement('div');
-    box.className = 'cf-sidebar-box';
+    box.className = 'cf-sidebar-box cf-gfsets-box';
 
     const hdr = document.createElement('div');
     hdr.className = 'cf-sidebar-header';
@@ -824,7 +835,7 @@ export class GlyphGrid {
 
   _makeCell(glyph, span) {
     const cell = document.createElement('div');
-    cell.className = 'cf-cell';
+    cell.className = 'cf-cell' + (this._selected === glyph.name ? ' selected' : '');
     cell.dataset.glyph = glyph.name;
     cell.style.width = this._cellPx(span) + 'px';
 
@@ -983,6 +994,7 @@ export class GlyphGrid {
     this._selected = name;
     cell.classList.add('selected');
     this._renderInfoPanel(name, null);  // immediate with what we have
+    this._updateSwatchActive();
 
     // Enrich info panel with glyph data (may already be cached)
     this._fc.getGlyph(name).then(glyph => {
@@ -1009,22 +1021,15 @@ export class GlyphGrid {
   // Color swatches
 
   _onColorSwatch(rgba, hex) {
-    if (this._selected) {
-      // Apply (or clear) mark color on the selected glyph
-      this._applyMarkColor(this._selected, rgba ?? null);
-    } else {
-      // Set / toggle color filter
-      const newFilter = (hex && hex !== this._colorFilter) ? hex : null;
-      this._colorFilter = newFilter;
-      this._updateSwatchActive();
-      this._reflow();
-    }
+    if (!this._selected) return;
+    this._applyMarkColor(this._selected, rgba ?? null);
   }
 
   _updateSwatchActive() {
-    this._colorClearBtn?.classList.toggle('active', !this._colorFilter);
+    const currentHex = this._selected ? (this._markColors.get(this._selected) ?? null) : null;
+    this._colorClearBtn?.classList.toggle('active', this._selected && !currentHex);
     for (const sw of this._swatchEls ?? []) {
-      sw.classList.toggle('active', sw.dataset.hex === this._colorFilter);
+      sw.classList.toggle('active', sw.dataset.hex === currentHex);
     }
   }
 
@@ -1073,6 +1078,7 @@ export class GlyphGrid {
       await this._fc.putMarkColor(glyphName, rgba ?? null);
       const hex = rgba ? markColorToHex(rgba) : null;
       this._markColors.set(glyphName, hex);
+      if (this._selected === glyphName) this._updateSwatchActive();
       const cell = this._cellEls.get(glyphName);
       if (cell) {
         if (hex) {
