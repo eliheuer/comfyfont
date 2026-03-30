@@ -49,31 +49,38 @@ const CSS = `
   background: #222; border-bottom: 1px solid #333;
   user-select: none;
 }
-#cf-title { flex: 1; font-weight: 600; font-size: 14px; color: #eee; }
+#cf-title { flex: 1; font-weight: 600; font-size: 13px; color: #eee; }
 #cf-save-btn {
-  background: #1a6e2e; color: #fff; border: none;
-  padding: 4px 14px; border-radius: 5px; cursor: pointer; font-size: 12px;
+  background: #0c1f10; color: #34c759; border: 1px solid #34c759;
+  padding: 3px 14px; border-radius: 12px; cursor: pointer; font-size: 13px;
+  white-space: nowrap; font-weight: 500;
 }
-#cf-save-btn:hover { background: #228b3b; }
+#cf-save-btn:hover { background: #122a18; }
+#cf-save-btn.multi-master {
+  background: #1f1800; color: #c8960c; border-color: #c8960c;
+}
+#cf-save-btn.multi-master:hover { background: #2a2000; }
 #cf-close-btn {
-  background: none; border: none; color: #888; font-size: 18px;
-  cursor: pointer; padding: 0 4px; line-height: 1;
+  background: #1f0c0c; color: #c0392b; border: 1px solid #c0392b;
+  border-radius: 50%; width: 24px; height: 24px; min-width: 24px;
+  cursor: pointer; padding: 0; font-size: 13px; font-weight: 500;
+  display: flex; align-items: center; justify-content: center;
 }
-#cf-close-btn:hover { color: #fff; }
+#cf-close-btn:hover { background: #2e1010; }
 
 /* Master pills */
 #cf-masters {
   display: flex; align-items: center; gap: 4px;
 }
 .cf-master-pill {
-  background: #2a2a2a; color: #999; border: 1px solid #3a3a3a;
+  background: #0c180e; color: #4a7a50; border: 1px solid #2a4a2e;
   padding: 3px 10px; border-radius: 12px; cursor: pointer;
-  font-size: 11px; white-space: nowrap; transition: all 0.1s;
+  font-size: 13px; white-space: nowrap; transition: all 0.1s;
 }
-.cf-master-pill:hover { background: #333; color: #ccc; border-color: #555; }
+.cf-master-pill:hover { background: #0f2012; color: #5a8f60; border-color: #3a6040; }
 .cf-master-pill.active {
-  background: #1a3d22; color: #66ee88;
-  border-color: #66ee88;
+  background: #0c1f10; color: #34c759;
+  border-color: #34c759;
 }
 
 /* Tab bar */
@@ -92,18 +99,18 @@ const CSS = `
   border-right: 1px solid #2a2a2a;
   cursor: pointer; white-space: nowrap;
   color: #888; transition: background 0.1s;
-  font-size: 12px;
+  font-size: 13px;
 }
 .cf-tab:hover { background: #282828; color: #ccc; }
 .cf-tab.active { background: #1a1a1a; color: #eee; border-bottom: 2px solid #4a9eff; }
 .cf-tab-close {
-  background: none; border: none; color: #555; font-size: 14px;
+  background: none; border: none; color: #555; font-size: 13px;
   cursor: pointer; padding: 0; line-height: 1; margin-left: 2px;
 }
 .cf-tab-close:hover { color: #e44; }
 #cf-tab-add {
   padding: 0 14px; height: 100%; border: none;
-  background: none; color: #555; font-size: 18px; cursor: pointer;
+  background: none; color: #555; font-size: 13px; cursor: pointer;
 }
 #cf-tab-add:hover { color: #aaa; }
 
@@ -119,6 +126,22 @@ const CSS = `
 /* Font tab pane: let GlyphGrid's 3-column root fill the space */
 .cf-pane-font.active { display: flex; flex-direction: row; padding: 0; }
 `;
+
+// Return the longest common word-boundary prefix shared by all strings.
+// Stops at word boundaries so "Instruments Serif" strips cleanly, not mid-word.
+function _commonPrefix(names) {
+  if (!names.length) return "";
+  let prefix = names[0];
+  for (const name of names.slice(1)) {
+    while (!name.startsWith(prefix)) {
+      // Trim back to last space
+      const idx = prefix.lastIndexOf(" ");
+      if (idx <= 0) return "";
+      prefix = prefix.slice(0, idx);
+    }
+  }
+  return prefix;
+}
 
 class EditorOverlay {
   constructor() {
@@ -232,16 +255,24 @@ class EditorOverlay {
     this._mastersEl.innerHTML = "";
 
     const ids = Object.keys(this._sources);
-    if (ids.length < 2) return;  // Only show pills for variable/multi-master fonts
+    const hasMasters = ids.length >= 2;
+    this._el?.querySelector("#cf-save-btn")?.classList.toggle("multi-master", hasMasters);
+    if (!hasMasters) return;
+
+    // Strip shared family name prefix so pills show just the style part
+    // e.g. "Instruments Serif Regular" → "Regular"
+    const allNames = ids.map((id) => this._sources[id].name || id);
+    const prefix   = _commonPrefix(allNames);
 
     for (const id of ids) {
-      const src = this._sources[id];
-      const label = src.name || id;
+      const src      = this._sources[id];
+      const fullName = src.name || id;
+      const label    = fullName.slice(prefix.length).trim() || fullName;
       const pill = document.createElement("button");
       pill.className = "cf-master-pill" + (id === this._activeMasterId ? " active" : "");
       pill.dataset.masterId = id;
       pill.textContent = label;
-      pill.title = label;
+      pill.title = fullName;
       pill.onclick = () => this._setMaster(id);
       this._mastersEl.appendChild(pill);
     }

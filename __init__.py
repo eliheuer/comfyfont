@@ -2,16 +2,14 @@
 ComfyFont — font editing and rendering for ComfyUI.
 
 Nodes:
-  ComfyFontLoad       — pick a font from the workspace (COMBO dropdown)
-  ComfyFontTextRender — FONT + text → IMAGE + MASK
-  ComfyFontGlyphRender — FONT + glyph name → IMAGE + MASK
-  ComfyFontComposite  — composite text over image
+  ComfyFont           — pick a font from the workspace (COMBO dropdown)
+  ComfyFontDrawBot    — FONT + preset → IMAGE
 
 Routes:
   POST /comfyfont/import    — upload a font; copies to workspace, converts TTF↔UFO
   GET  /comfyfont/fonts     — JSON list of font names in the workspace
   GET  /comfyfont/glyph_map — list glyphs in a font (?name= or ?path=)
-  GET  /comfyfont/ws        — WebSocket RPC for the glyph editor (?name= or ?path=)
+  WS   /comfyfont/ws        — WebSocket RPC for the glyph editor (?name= or ?path=)
 
 Font workspace (comfyfont/fonts/):
   MyFont.ttf   — compiled font, used by rendering nodes
@@ -61,14 +59,6 @@ def _resolve_edit_path(font_path: str) -> str:
     """For editing, prefer the sibling UFO over a compiled font."""
     return _sibling_ufo(font_path) or font_path
 
-
-def _convert_ttf_to_ufo(ttf_path: str, ufo_path: str) -> None:
-    from fontTools.ttLib import TTFont
-    from .core.compile import ttf_to_ufo
-    tt = TTFont(ttf_path, lazy=False)
-    ttf_to_ufo(tt, ufo_path)
-    tt.close()
-    log.info("Converted %s → %s", ttf_path, ufo_path)
 
 
 def _resolve_font_param(request: web.Request) -> str:
@@ -148,18 +138,14 @@ async def _import_font(request: web.Request) -> web.Response:
                 import shutil
                 dest = os.path.join(FONTS_DIR, orig_name or os.path.basename(src_path))
                 shutil.copy2(src_path, dest)
-                ufo_path = os.path.splitext(dest)[0] + ".ufo"
-                await loop.run_in_executor(None, _convert_ttf_to_ufo, dest, ufo_path)
                 filename, main_path = os.path.basename(dest), dest
 
             elif ext == ".ufo" or os.path.isdir(src_path):
                 import shutil
-                from .core.compile import compile_ufo_to_ttf
                 dest = os.path.join(FONTS_DIR, orig_name or os.path.basename(src_path))
                 if os.path.exists(dest):
                     shutil.rmtree(dest)
                 shutil.copytree(src_path, dest)
-                await loop.run_in_executor(None, compile_ufo_to_ttf, dest)
                 filename, main_path = os.path.basename(dest), dest
 
             elif ext == ".zip":
@@ -219,13 +205,6 @@ async def _import_font(request: web.Request) -> web.Response:
                          or next((p for p in written if p.endswith(".ufo")), written[0]))
             ext = os.path.splitext(main_path)[1].lower()
 
-            if ext in (".ttf", ".otf", ".woff", ".woff2"):
-                ufo_path = os.path.splitext(main_path)[0] + ".ufo"
-                await loop.run_in_executor(None, _convert_ttf_to_ufo, main_path, ufo_path)
-            elif ext == ".ufo":
-                from .core.compile import compile_ufo_to_ttf
-                await loop.run_in_executor(None, compile_ufo_to_ttf, main_path)
-
             filename = os.path.basename(main_path)
 
         return web.json_response({"ok": True, "name": filename, "path": main_path})
@@ -238,7 +217,6 @@ async def _import_font(request: web.Request) -> web.Response:
 @routes.get("/comfyfont/fonts")
 async def _list_fonts(request: web.Request) -> web.Response:
     """Return the list of font names currently in the workspace."""
-    from .nodes.load import get_font_list
     return web.json_response(get_font_list())
 
 

@@ -87,18 +87,16 @@ const CSS = `
   overflow: hidden;
 }
 .cf-sidebar-header {
-  font-size: 10px;
+  font-size: 12px;
   color: ${T.headerText};
   padding: 0 12px 6px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
 }
 .cf-cat-item {
   display: block;
   padding: 6px 12px;
   cursor: pointer;
   color: ${T.sidebarText};
-  font-size: 13px;
+  font-size: 12px;
   user-select: none;
   transition: color 0.1s;
 }
@@ -131,7 +129,7 @@ const CSS = `
 .cf-grid-empty {
   color: #444;
   padding: 40px 20px;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 /* ---- Cell ---- */
@@ -144,7 +142,7 @@ const CSS = `
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  flex-shrink: 0;
+  min-width: 0;
   transition: border-color 0.1s;
   box-sizing: border-box;
 }
@@ -174,7 +172,7 @@ const CSS = `
   align-items: center;
   justify-content: center;
   color: #2e2e2e;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .cf-cell-labels {
@@ -187,7 +185,7 @@ const CSS = `
   flex-shrink: 0;
 }
 .cf-cell-name {
-  font-size: 11px;
+  font-size: 12px;
   color: ${T.labelText};
   white-space: nowrap;
   overflow: hidden;
@@ -195,7 +193,7 @@ const CSS = `
   line-height: 1.3;
 }
 .cf-cell-unicode {
-  font-size: 11px;
+  font-size: 12px;
   color: ${T.labelUnicode};
   white-space: nowrap;
   line-height: 1.3;
@@ -222,12 +220,10 @@ const CSS = `
 }
 .cf-info-row { display: flex; flex-direction: column; gap: 3px; }
 .cf-info-label {
-  font-size: 10px;
+  font-size: 12px;
   color: ${T.headerText};
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
 }
-.cf-info-value { font-size: 13px; color: #bbb; }
+.cf-info-value { font-size: 12px; color: #bbb; }
 .cf-info-hint  { color: #444; font-size: 12px; padding: 4px 0; }
 
 /* ---- Color swatches ---- */
@@ -246,7 +242,7 @@ const CSS = `
   cursor: pointer;
   appearance: none;
   display: flex; align-items: center; justify-content: center;
-  color: #555; font-size: 13px; line-height: 1;
+  color: #555; font-size: 12px; line-height: 1;
   flex-shrink: 0; padding: 0;
   transition: border-color 0.1s, color 0.1s;
 }
@@ -296,7 +292,7 @@ const CSS = `
 }
 .cf-gfset-item.active .cf-gfset-name { color: ${T.accent}; }
 .cf-gfset-count {
-  font-size: 11px;
+  font-size: 12px;
   color: #555;
   white-space: nowrap;
   flex-shrink: 0;
@@ -316,7 +312,7 @@ const CSS = `
 }
 .cf-gfset-item.active .cf-gfset-bar-fill { background: ${T.accent}; opacity: 0.6; }
 .cf-gfset-loading {
-  font-size: 11px;
+  font-size: 12px;
   color: #444;
   padding: 6px 12px;
   font-style: italic;
@@ -340,7 +336,7 @@ const CSS = `
   color: #444;
 }
 .cf-ghost-char { font-size: 48px; line-height: 1; color: #333; }
-.cf-ghost-cp   { font-size: 11px; }
+.cf-ghost-cp   { font-size: 12px; }
 .cf-ghost-add {
   margin-top: 4px;
   background: none;
@@ -394,10 +390,8 @@ function unicodeCategory(codepoint) {
 // ---------------------------------------------------------------------------
 // Column span — from Runebender compute_col_span (name length only for now)
 
-function computeColSpan(name) {
-  if (name.length <= 14) return 1;
-  if (name.length <= 26) return 2;
-  return 3;
+function computeColSpan(_name) {
+  return 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -519,11 +513,17 @@ export class GlyphGrid {
       { root: this._scrollEl, rootMargin: '400px' }
     );
 
+    this._lastCols = 0;
     this._resizeObserver = new ResizeObserver(() => {
-      // Debounce: reflow at most once per animation frame
+      // Only reflow when the number of columns actually changes — prevents
+      // layout loops where content height changes trigger spurious resize events.
       if (!this._reflowPending) {
         this._reflowPending = true;
-        requestAnimationFrame(() => { this._reflowPending = false; this._reflow(); });
+        requestAnimationFrame(() => {
+          this._reflowPending = false;
+          const cols = this._columns();
+          if (cols !== this._lastCols) this._reflow();
+        });
       }
     });
     this._resizeObserver.observe(this._scrollEl);
@@ -781,14 +781,12 @@ export class GlyphGrid {
   // Layout
 
   _columns() {
-    const w = this._scrollEl.clientWidth || (window.innerWidth - SIDEBAR_W - GAP * 4);
+    const w = this._scrollEl.clientWidth || (window.innerWidth - SIDEBAR_W - INFO_W - GAP * 6);
     return Math.max(1, Math.floor(w / (CELL_W + GAP)));
   }
 
-  // Cell unit = exact width so all columns together fill the scroll area with no leftover strip.
-  // Mirrors Runebender: cell_unit = (grid_width - (cols-1) * GAP) / cols
   _cellUnit() {
-    const w = this._scrollEl.clientWidth || (window.innerWidth - SIDEBAR_W - GAP * 4);
+    const w = this._scrollEl.clientWidth || (window.innerWidth - SIDEBAR_W - INFO_W - GAP * 6);
     const cols = this._columns();
     return (w - (cols - 1) * GAP) / cols;
   }
@@ -844,12 +842,12 @@ export class GlyphGrid {
       return;
     }
 
+    this._lastCols = cols;
     const rows = packRows(glyphs, cols);
 
     for (const row of rows) {
       const rowEl = document.createElement('div');
       rowEl.className = 'cf-grid-row';
-
       for (const { glyph, span } of row) {
         let cell;
         if (glyph.ghost) {
@@ -987,15 +985,20 @@ export class GlyphGrid {
 
     const d = packedPathToSVGD(path);
 
-    // viewBox in font coordinate space, Y-flip via transform on path
-    const margin = (this._ascender - this._descender) * 0.05;
+    // viewBox in font coordinate space, Y-flip via transform on path.
+    // Use 1.2× UPM as the top bound so diacritics (which often exceed the
+    // nominal ascender) are never clipped. Keep the actual descender below with
+    // a small margin — the label area below the preview already provides visual
+    // separation, so we don't need symmetric margins.
     const vbX = 0;
-    const vbY = -(this._ascender + margin);
+    const vbY = -(this._upm * 1.2);
     const vbW = Math.max(advance, this._upm * 0.05);
-    const vbH = this._ascender - this._descender + margin * 2;
+    const vbH = this._upm * 1.2 + Math.abs(this._descender) + this._upm * 0.05;
 
     const NS  = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('width', '100%');
+    svg.setAttribute('height', '100%');
     svg.setAttribute('viewBox', `${vbX} ${vbY} ${vbW} ${vbH}`);
     svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
 

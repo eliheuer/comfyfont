@@ -31,7 +31,10 @@ def ttf_to_ufo(tt, dest_ufo: str) -> None:
     name_table = tt["name"]
     def n(nid):
         r = name_table.getName(nid, 3, 1, 0x0409) or name_table.getName(nid, 1, 0, 0)
-        return r.toUnicode().strip() if r else ""
+        try:
+            return r.toUnicode().strip() if r else ""
+        except Exception:
+            return ""
 
     head = tt.get("head")
     os2  = tt.get("OS/2")
@@ -76,4 +79,8 @@ def ttf_to_ufo(tt, dest_ufo: str) -> None:
 
     if os.path.exists(dest_ufo):
         shutil.rmtree(dest_ufo)
-    font.save(dest_ufo)
+    try:
+        font.save(dest_ufo)
+    except Exception:
+        log.warning("ufoLib2 save failed for %s", dest_ufo, exc_info=True)
+        raise
