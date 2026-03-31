@@ -245,4 +245,149 @@ export class VarPackedPath {
   invalidate() {
     this._path2d = null;
   }
+
+  // -----------------------------------------------------------------------
+  // Mutation methods (required by change-recorder.js and changes.js)
+
+  /** Return [x, y] for the point at absolute pointIndex. */
+  getPointPosition(pointIndex) {
+    return [this.coordinates[pointIndex * 2], this.coordinates[pointIndex * 2 + 1]];
+  }
+
+  /** Set x, y for the point at absolute pointIndex. */
+  setPointPosition(pointIndex, x, y) {
+    this.coordinates[pointIndex * 2]     = x;
+    this.coordinates[pointIndex * 2 + 1] = y;
+    this.invalidate();
+  }
+
+  /** Return the start absolute point index for a contour. */
+  _contourStart(contourIndex) {
+    return contourIndex === 0 ? 0 : this.contourInfo[contourIndex - 1].endPoint + 1;
+  }
+
+  /** Return a plain-object snapshot of a contour (for rollback in deleteContour). */
+  getContour(contourIndex) {
+    const start = this._contourStart(contourIndex);
+    const { endPoint, isClosed } = this.contourInfo[contourIndex];
+    const points = [];
+    for (let i = start; i <= endPoint; i++) {
+      points.push({
+        x: this.coordinates[i * 2],
+        y: this.coordinates[i * 2 + 1],
+        type: this.pointTypes[i],
+      });
+    }
+    return { points, isClosed };
+  }
+
+  /** Return a plain-object snapshot of one point within a contour. */
+  getContourPoint(contourIndex, contourPointIndex) {
+    const i = this._contourStart(contourIndex) + contourPointIndex;
+    return {
+      x: this.coordinates[i * 2],
+      y: this.coordinates[i * 2 + 1],
+      type: this.pointTypes[i],
+    };
+  }
+
+  /** Insert a contour (plain object {points, isClosed}) at contourIndex. */
+  insertContour(contourIndex, contour) {
+    const insertAt = this._contourStart(contourIndex);
+    const n = contour.points.length;
+    const newCoords = [];
+    const newTypes  = [];
+    for (const pt of contour.points) {
+      newCoords.push(pt.x, pt.y);
+      newTypes.push(pt.type);
+    }
+    this.coordinates.splice(insertAt * 2, 0, ...newCoords);
+    this.pointTypes.splice(insertAt, 0, ...newTypes);
+    // Shift all existing endpoints at or after the insertion
+    for (let i = contourIndex; i < this.contourInfo.length; i++) {
+      this.contourInfo[i] = { ...this.contourInfo[i], endPoint: this.contourInfo[i].endPoint + n };
+    }
+    this.contourInfo.splice(contourIndex, 0, {
+      endPoint: insertAt + n - 1,
+      isClosed: contour.isClosed,
+    });
+    this.invalidate();
+  }
+
+  /** Delete the contour at contourIndex. */
+  deleteContour(contourIndex) {
+    const start = this._contourStart(contourIndex);
+    const { endPoint } = this.contourInfo[contourIndex];
+    const n = endPoint - start + 1;
+    this.coordinates.splice(start * 2, n * 2);
+    this.pointTypes.splice(start, n);
+    this.contourInfo.splice(contourIndex, 1);
+    // Shift remaining endpoints
+    for (let i = contourIndex; i < this.contourInfo.length; i++) {
+      this.contourInfo[i] = { ...this.contourInfo[i], endPoint: this.contourInfo[i].endPoint - n };
+    }
+    this.invalidate();
+  }
+
+  /**
+   * Insert a point ({x, y, type}) at contour-local index contourPointIndex
+   * inside contour contourIndex.
+   */
+  insertPoint(contourIndex, contourPointIndex, point) {
+    const insertAt = this._contourStart(contourIndex) + contourPointIndex;
+    this.coordinates.splice(insertAt * 2, 0, point.x, point.y);
+    this.pointTypes.splice(insertAt, 0, point.type);
+    for (let i = 0; i < this.contourInfo.length; i++) {
+      if (this.contourInfo[i].endPoint >= insertAt) {
+        this.contourInfo[i] = { ...this.contourInfo[i], endPoint: this.contourInfo[i].endPoint + 1 };
+      }
+    }
+    this.invalidate();
+  }
+
+  /** Delete the point at contour-local index contourPointIndex in contourIndex. */
+  deletePoint(contourIndex, contourPointIndex) {
+    const deleteAt = this._contourStart(contourIndex) + contourPointIndex;
+    this.coordinates.splice(deleteAt * 2, 2);
+    this.pointTypes.splice(deleteAt, 1);
+    for (let i = 0; i < this.contourInfo.length; i++) {
+      if (this.contourInfo[i].endPoint >= deleteAt) {
+        this.contourInfo[i] = { ...this.contourInfo[i], endPoint: this.contourInfo[i].endPoint - 1 };
+      }
+    }
+    this.invalidate();
+  }
+
+  /** Append all contours from otherPath onto this path. */
+  appendPath(otherPath) {
+    const offset = this.pointTypes.length;
+    this.coordinates.push(...otherPath.coordinates);
+    this.pointTypes.push(...otherPath.pointTypes);
+    for (const ci of otherPath.contourInfo) {
+      this.contourInfo.push({ endPoint: ci.endPoint + offset, isClosed: ci.isClosed });
+    }
+    this.invalidate();
+  }
+
+  /** Delete the last n contours (rollback for appendPath). */
+  deleteNTrailingContours(n) {
+    for (let i = 0; i < n; i++) {
+      if (this.contourInfo.length) this.deleteContour(this.contourInfo.length - 1);
+    }
+  }
+
+  /**
+   * Translate all points so that the first point lands at (x, y).
+   * Used for component transformation.
+   */
+  moveAllWithFirstPoint(x, y) {
+    if (!this.pointTypes.length) return;
+    const dx = x - this.coordinates[0];
+    const dy = y - this.coordinates[1];
+    for (let i = 0; i < this.pointTypes.length; i++) {
+      this.coordinates[i * 2]     += dx;
+      this.coordinates[i * 2 + 1] += dy;
+    }
+    this.invalidate();
+  }
 }

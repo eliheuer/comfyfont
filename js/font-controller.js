@@ -64,6 +64,13 @@ export class VariableGlyphController {
     const src = this.sources.find((s) => s.locationBase === masterId);
     return src ? (this.layers[src.layerName] ?? this.defaultLayer) : this.defaultLayer;
   }
+
+  /** Return the layer name string for a master ID (needed for building change paths). */
+  layerNameForMaster(masterId) {
+    if (!masterId) return this.sources[0]?.layerName ?? null;
+    const src = this.sources.find((s) => s.locationBase === masterId);
+    return src?.layerName ?? this.sources[0]?.layerName ?? null;
+  }
 }
 
 // ---------------------------------------------------------------------------
