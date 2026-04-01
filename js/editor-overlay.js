@@ -69,6 +69,25 @@ const CSS = `
 }
 #cf-close-btn:hover { background: #2e1010; color: #c0392b; border-color: #c0392b; }
 
+/* Axis sliders */
+#cf-axes {
+  display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+}
+.cf-axis-row {
+  display: flex; align-items: center; gap: 6px;
+}
+.cf-axis-label {
+  font-size: 11px; color: ${T.sidebarText}; white-space: nowrap; min-width: 24px;
+  text-align: right; font-variant-numeric: tabular-nums;
+}
+.cf-axis-slider {
+  width: 96px; accent-color: ${T.accent}; cursor: pointer;
+}
+.cf-axis-value {
+  font-size: 11px; color: ${T.labelText}; min-width: 28px;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Master pills */
 #cf-masters {
   display: flex; align-items: center; gap: 4px;
@@ -160,6 +179,10 @@ class EditorOverlay {
     this._sources = {};   // {id: {name, location, ...}}
     this._activeMasterId = null;
 
+    // Axis state
+    this._axes          = [];   // [{name, tag, minimum, default, maximum}]
+    this._activeLocation = {};  // {axisName: value}
+
     // Key handler
     this._keyHandler = (e) => {
       if (e.key === "Escape") this.close();
@@ -190,7 +213,7 @@ class EditorOverlay {
     // Update title
     this._el.querySelector("#cf-title").textContent = `ComfyFont — ${fontName}`;
 
-    // Load sources for master pills
+    // Load sources + axes
     try {
       this._sources = await this._fontController.getSources() ?? {};
     } catch {
@@ -200,7 +223,17 @@ class EditorOverlay {
     if (!this._activeMasterId || !this._sources[this._activeMasterId]) {
       this._activeMasterId = sourceIds[0] ?? null;
     }
+    try {
+      this._axes = await this._fontController.getAxes() ?? [];
+    } catch {
+      this._axes = [];
+    }
+    // Initialise location to axis defaults
+    this._activeLocation = Object.fromEntries(
+      this._axes.map((ax) => [ax.name, ax.default ?? 0])
+    );
     this._renderMasterPills();
+    this._renderAxisSliders();
 
     // Ensure Font tab exists and is active
     if (!this._tabs.find((t) => t.id === "__font__")) {
@@ -229,6 +262,7 @@ class EditorOverlay {
     el.innerHTML = `
       <div id="cf-header">
         <span id="cf-title">ComfyFont</span>
+        <div id="cf-axes"></div>
         <div id="cf-masters"></div>
         <button id="cf-save-btn">Save</button>
         <button id="cf-close-btn" title="Close (Esc)">✕</button>
@@ -243,9 +277,10 @@ class EditorOverlay {
     el.querySelector("#cf-save-btn").onclick = () => this._save();
     el.querySelector("#cf-tab-add").onclick = () => this._promptOpenGlyph();
 
-    this._tabBar  = el.querySelector("#cf-tabs");
-    this._content = el.querySelector("#cf-content");
+    this._tabBar    = el.querySelector("#cf-tabs");
+    this._content   = el.querySelector("#cf-content");
     this._mastersEl = el.querySelector("#cf-masters");
+    this._axesEl    = el.querySelector("#cf-axes");
     this._el = el;
   }
 
@@ -283,14 +318,60 @@ class EditorOverlay {
   _setMaster(masterId) {
     this._activeMasterId = masterId;
 
-    // Update pill active state
     for (const pill of this._mastersEl.querySelectorAll(".cf-master-pill")) {
       pill.classList.toggle("active", pill.dataset.masterId === masterId);
     }
 
-    // Propagate to all open tabs
     for (const tab of this._tabs) {
       tab.instance?.setMaster?.(masterId);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Axis sliders
+
+  _renderAxisSliders() {
+    if (!this._axesEl) return;
+    this._axesEl.innerHTML = "";
+    if (!this._axes.length) return;
+
+    for (const ax of this._axes) {
+      const row = document.createElement("div");
+      row.className = "cf-axis-row";
+
+      const label = document.createElement("span");
+      label.className = "cf-axis-label";
+      label.textContent = ax.tag || ax.name;
+
+      const slider = document.createElement("input");
+      slider.type      = "range";
+      slider.className = "cf-axis-slider";
+      slider.min       = ax.minimum ?? 0;
+      slider.max       = ax.maximum ?? 1000;
+      slider.step      = 1;
+      slider.value     = this._activeLocation[ax.name] ?? ax.default ?? 0;
+
+      const valueEl = document.createElement("span");
+      valueEl.className = "cf-axis-value";
+      valueEl.textContent = String(Math.round(slider.value));
+
+      slider.addEventListener("input", () => {
+        const v = parseFloat(slider.value);
+        valueEl.textContent = String(Math.round(v));
+        this._setLocation({ ...this._activeLocation, [ax.name]: v });
+      });
+
+      row.appendChild(label);
+      row.appendChild(slider);
+      row.appendChild(valueEl);
+      this._axesEl.appendChild(row);
+    }
+  }
+
+  _setLocation(location) {
+    this._activeLocation = location;
+    for (const tab of this._tabs) {
+      tab.instance?.setLocation?.(location);
     }
   }
 

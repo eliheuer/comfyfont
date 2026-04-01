@@ -27,12 +27,45 @@ from server import PromptServer
 
 from .nodes.drawbot import DrawBotNode
 from .nodes.comfyfont import ComfyFontNode, get_font_list
+from .nodes.fork import ForkFontNode
+from .nodes.ai_nodes import AIKerningNode, AISpacingNode, AIGlyphSynthNode
 
 log = logging.getLogger(__name__)
 
-NODE_DIR  = os.path.dirname(os.path.abspath(__file__))
-FONTS_DIR = os.path.join(NODE_DIR, "fonts")
+NODE_DIR   = os.path.dirname(os.path.abspath(__file__))
+FONTS_DIR  = os.path.join(NODE_DIR, "fonts")
+ASSETS_DIR = os.path.join(NODE_DIR, "assets")
 os.makedirs(FONTS_DIR, exist_ok=True)
+
+
+def _maybe_compile_icons() -> None:
+    """Recompile assets/icons.ufo → assets/icons.ttf if the UFO is newer."""
+    ufo_dir = os.path.join(ASSETS_DIR, "icons.ufo")
+    ttf_out = os.path.join(ASSETS_DIR, "icons.ttf")
+    if not os.path.isdir(ufo_dir):
+        return
+
+    # Find the newest mtime in the UFO tree
+    ufo_mtime = 0.0
+    for dirpath, _, filenames in os.walk(ufo_dir):
+        for fname in filenames:
+            ufo_mtime = max(ufo_mtime, os.path.getmtime(os.path.join(dirpath, fname)))
+
+    ttf_mtime = os.path.getmtime(ttf_out) if os.path.isfile(ttf_out) else 0.0
+
+    if ufo_mtime <= ttf_mtime:
+        return  # already up to date
+
+    log.info("icons.ufo changed — recompiling icons.ttf")
+    try:
+        from .core.compile import compile_ufo_to_ttf
+        compile_ufo_to_ttf(ufo_dir)
+        log.info("icons.ttf compiled OK")
+    except Exception:
+        log.exception("icon font compilation failed")
+
+
+_maybe_compile_icons()
 
 # Register the workspace with ComfyUI's folder_paths so other nodes and tools
 # can discover ComfyFont's managed files through the standard API.
@@ -78,6 +111,16 @@ def _resolve_font_param(request: web.Request) -> str:
 # Routes
 
 routes = PromptServer.instance.routes
+
+
+@routes.get("/comfyfont/assets/{filename}")
+async def _static_asset(request: web.Request) -> web.Response:
+    """Serve files from assets/ (e.g. icons.ttf for the icon font)."""
+    filename = request.match_info["filename"]
+    path = os.path.join(ASSETS_DIR, filename)
+    if not os.path.isfile(path):
+        raise web.HTTPNotFound()
+    return web.FileResponse(path)
 
 
 @routes.post("/comfyfont/import")
@@ -263,13 +306,21 @@ async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
 # Node registration
 
 NODE_CLASS_MAPPINGS = {
-    "ComfyFont":        ComfyFontNode,
-    "ComfyFontDrawBot": DrawBotNode,
+    "ComfyFont":           ComfyFontNode,
+    "ComfyFontDrawBot":    DrawBotNode,
+    "ComfyFontFork":       ForkFontNode,
+    "ComfyFontAIKerning":  AIKerningNode,
+    "ComfyFontAISpacing":  AISpacingNode,
+    "ComfyFontAIGlyphSynth": AIGlyphSynthNode,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "ComfyFont":        "ComfyFont",
-    "ComfyFontDrawBot": "DrawBot",
+    "ComfyFont":             "ComfyFont",
+    "ComfyFontDrawBot":      "DrawBot",
+    "ComfyFontFork":         "Fork Font",
+    "ComfyFontAIKerning":    "AI Kerning",
+    "ComfyFontAISpacing":    "AI Spacing",
+    "ComfyFontAIGlyphSynth": "AI Glyph Synth",
 }
 
 WEB_DIRECTORY = "./js"

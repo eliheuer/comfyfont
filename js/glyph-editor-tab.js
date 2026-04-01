@@ -622,19 +622,33 @@ class TextTool   extends BaseTool { get cursor() { return 'text';      } }
 // Toolbar tool definitions
 
 const TOOLS = [
-  { id: 'select', icon: '🖱️',  title: 'Select',  toolClass: SelectTool },
-  { id: 'pen',    icon: '🖊️', title: 'Pen',     toolClass: PenTool    },
-  { id: 'knife',  icon: '🔪',  title: 'Knife',   toolClass: KnifeTool  },
-  { id: 'ruler',  icon: '📏',  title: 'Ruler',   toolClass: RulerTool  },
-  { id: 'hand',   icon: '✋',  title: 'Hand',    toolClass: HandTool   },
-  { id: 'rotate', icon: '🔄',  title: 'Rotate',  toolClass: RotateTool },
-  { id: 'text',   icon: '📝',  title: 'Text',    toolClass: TextTool   },
+  { id: 'select', icon: '\uE010', title: 'Select',  toolClass: SelectTool },
+  { id: 'pen',    icon: '\uE011', title: 'Pen',     toolClass: PenTool    },
+  { id: 'knife',  icon: '\uE013', title: 'Knife',   toolClass: KnifeTool  },
+  { id: 'ruler',  icon: '\uE015', title: 'Ruler',   toolClass: RulerTool  },
+  { id: 'hand',   icon: '\uE014', title: 'Hand',    toolClass: HandTool   },
+  { id: 'rotate', icon: '\uE015', title: 'Rotate',  toolClass: RotateTool },
+  { id: 'text',   icon: '\uE017', title: 'Text',    toolClass: TextTool   },
 ];
 
 // ---------------------------------------------------------------------------
 // CSS
 
 const CSS = `
+@font-face {
+  font-family: 'ComfyFontIcons';
+  src: url('/comfyfont/assets/icons.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+}
+.cf-icon {
+  font-family: 'ComfyFontIcons', sans-serif;
+  font-size: 18px;
+  line-height: 1;
+  font-style: normal;
+  font-weight: normal;
+  -webkit-font-smoothing: antialiased;
+}
 /* Editor root fills the pane; canvas behind, toolbar floats on top */
 .cf-editor-root {
   position: relative; width: 100%; height: 100%;
@@ -742,6 +756,10 @@ export class GlyphEditorTab {
     // Last-drawn component Path2Ds (rebuilt each _draw call, used for hit testing)
     this._componentPaths  = [];
 
+    // Axis location + ghost (interpolated glyph shown at non-default axis position)
+    this._axisLocation = {};
+    this._ghostLayer   = null;
+
     this._buildDOM(container);
     this._setupPointerHandlers();
 
@@ -783,7 +801,7 @@ export class GlyphEditorTab {
 
     for (const tool of TOOLS) {
       const btn = document.createElement("button");
-      btn.className = "cf-editor-tool-btn";
+      btn.className = "cf-editor-tool-btn cf-icon";
       btn.textContent = tool.icon;
       btn.title = tool.title;
       btn.onclick = () => this._setTool(tool.id);
@@ -1201,6 +1219,22 @@ export class GlyphEditorTab {
     this._cc.scheduleRedraw();
   }
 
+  setLocation(location) {
+    this._axisLocation = { ...location };
+    // Fetch interpolated glyph for ghost rendering (fire-and-forget)
+    if (this._glyph && Object.keys(location).length) {
+      this._fc.getSpecimenAtLocation([this._glyphName], location)
+        .then(result => {
+          this._ghostLayer = result[this._glyphName] ?? null;
+          this._cc.scheduleRedraw();
+        })
+        .catch(() => { this._ghostLayer = null; });
+    } else {
+      this._ghostLayer = null;
+      this._cc.scheduleRedraw();
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Drawing — pixel space (reset CanvasController's y-flip transform)
 
@@ -1214,6 +1248,7 @@ export class GlyphEditorTab {
     const advance = layer.xAdvance ?? 1000;
 
     this._drawMetrics(ctx, advance);
+    this._drawGhost(ctx);
     this._drawComponents(ctx);
 
     const path = layer.path;
@@ -1225,6 +1260,17 @@ export class GlyphEditorTab {
 
     this._activeTool?.drawOverlay(ctx);
 
+    ctx.restore();
+  }
+
+  _drawGhost(ctx) {
+    if (!this._ghostLayer?.path?.coordinates?.length) return;
+    const p2d = _buildPath2D(this._ghostLayer.path, this._cc);
+    ctx.save();
+    ctx.globalAlpha = 0.18;
+    ctx.fillStyle   = '#66EE88';
+    ctx.fill(p2d, 'evenodd');
+    ctx.globalAlpha = 1;
     ctx.restore();
   }
 
