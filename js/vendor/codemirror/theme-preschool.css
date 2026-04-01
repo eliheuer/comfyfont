@@ -1,0 +1,143 @@
+/*
+ * CodeMirror 5 — "preschool" theme
+ * Translated from ~/.config/nvim/colors/preschool.lua
+ *
+ * Palette:
+ *   bg         #000000   fg         #D8C8A0
+ *   red        #CC6255   orange     #D4943D
+ *   yellow     #D9BE4A   green      #6DBF4E
+ *   blue       #4D9E78   purple     #8878A8
+ *   lavender   #A0A0C0   gray       #58524A
+ *   dark_gray  #1A1816   mid_gray   #3A3632
+ */
+
+.cm-s-preschool.CodeMirror {
+  background: #000000;
+  color: #D8C8A0;
+  font-family: monospace;
+  line-height: 1.5;
+}
+
+/* Gutter (line numbers) */
+.cm-s-preschool .CodeMirror-gutters {
+  background: #0E0D0B;
+  border-right: 1px solid #3A3632;
+}
+.cm-s-preschool .CodeMirror-linenumber {
+  color: #3A3632;
+}
+
+/* Cursor */
+.cm-s-preschool .CodeMirror-cursor {
+  border-left: 2px solid #D8C8A0;
+}
+
+/* Active line */
+.cm-s-preschool .CodeMirror-activeline-background {
+  background: #1A1816;
+}
+
+/* Selection */
+.cm-s-preschool .CodeMirror-selected {
+  background: #2A2520;
+}
+.cm-s-preschool.CodeMirror-focused .CodeMirror-selected {
+  background: #2A2520;
+}
+
+/* Matching brackets */
+.cm-s-preschool .CodeMirror-matchingbracket {
+  color: #D9BE4A !important;
+  background: #3A3632;
+  font-weight: bold;
+}
+
+/* Scrollbars are hidden via scrollbarStyle:"null" in the JS config. */
+
+/* ── Syntax tokens ────────────────────────────────────────── */
+
+/* Comments — gray, italic */
+.cm-s-preschool .cm-comment {
+  color: #58524A;
+  font-style: italic;
+}
+
+/* Keywords (if, for, def, class, return, import, …) — red, bold */
+.cm-s-preschool .cm-keyword {
+  color: #CC6255;
+  font-weight: bold;
+}
+
+/* Operators (+, -, ==, …) — lavender */
+.cm-s-preschool .cm-operator {
+  color: #A0A0C0;
+}
+
+/* Numbers — orange */
+.cm-s-preschool .cm-number {
+  color: #D4943D;
+}
+
+/* Strings — green */
+.cm-s-preschool .cm-string {
+  color: #6DBF4E;
+}
+.cm-s-preschool .cm-string-2 {
+  color: #6DBF4E;
+}
+
+/* Function / class names after def/class — yellow, bold */
+.cm-s-preschool .cm-def {
+  color: #D9BE4A;
+  font-weight: bold;
+}
+
+/* Built-in names (print, len, range, …) — yellow */
+.cm-s-preschool .cm-builtin {
+  color: #D9BE4A;
+}
+
+/* Atoms: True, False, None — orange, bold */
+.cm-s-preschool .cm-atom {
+  color: #D4943D;
+  font-weight: bold;
+}
+
+/* Variables / identifiers — fg */
+.cm-s-preschool .cm-variable {
+  color: #D8C8A0;
+}
+.cm-s-preschool .cm-variable-2 {
+  color: #D8C8A0;
+}
+.cm-s-preschool .cm-variable-3 {
+  color: #D8C8A0;
+}
+
+/* Types — blue, bold */
+.cm-s-preschool .cm-type {
+  color: #4D9E78;
+  font-weight: bold;
+}
+
+/* Decorators / meta — purple */
+.cm-s-preschool .cm-meta {
+  color: #8878A8;
+}
+
+/* Attributes — purple */
+.cm-s-preschool .cm-attribute {
+  color: #8878A8;
+}
+
+/* Punctuation / delimiters — fg */
+.cm-s-preschool .cm-punctuation {
+  color: #D8C8A0;
+}
+
+/* Errors */
+.cm-s-preschool .cm-error {
+  color: #D8C8A0;
+  background: #CC6255;
+  font-weight: bold;
+}

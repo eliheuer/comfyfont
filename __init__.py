@@ -25,7 +25,7 @@ import os
 import aiohttp.web as web
 from server import PromptServer
 
-from .nodes.drawbot import DrawBotNode
+from .nodes.drawbot import DrawBotNode, load_presets as _load_drawbot_presets
 from .nodes.comfyfont import ComfyFontNode, get_font_list
 from .nodes.fork import ForkFontNode
 from .nodes.ai_nodes import AIKerningNode, AISpacingNode, AIGlyphSynthNode
@@ -121,6 +121,18 @@ async def _static_asset(request: web.Request) -> web.Response:
     if not os.path.isfile(path):
         raise web.HTTPNotFound()
     return web.FileResponse(path)
+
+
+@routes.get("/comfyfont/drawbot_preset")
+async def _drawbot_preset(request: web.Request) -> web.Response:
+    """Return the source of a DrawBot preset by display name."""
+    name = request.query.get("name", "")
+    if not name:
+        raise web.HTTPBadRequest(reason="name required")
+    presets = _load_drawbot_presets()
+    if name not in presets:
+        raise web.HTTPNotFound()
+    return web.Response(text=presets[name], content_type="text/plain")
 
 
 @routes.post("/comfyfont/import")

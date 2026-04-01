@@ -2,6 +2,8 @@
 
 A font editing and rendering extension for [ComfyUI](https://github.com/comfyanonymous/ComfyUI). Treat fonts as a first-class data type in your AI image workflows — load, edit, render, and fork font sources within the node graph.
 
+<img width="1920" height="1080" alt="Image" src="https://github.com/user-attachments/assets/0e7452f6-164e-415e-a811-922a2617cce3" />
+
 ---
 
 ## What it does

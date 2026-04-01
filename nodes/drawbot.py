@@ -1,21 +1,25 @@
 """
 DrawBot rendering node — uses drawbot-skia to render type specimens.
 
-Each preset is a standalone DrawBot script. The following variables are
-injected into every script's execution context:
+Preset scripts live in nodes/drawbot_presets/*.py. Each file is a plain
+DrawBot script; drop any .py file there and it appears in the dropdown after
+restarting ComfyUI. See drawbot_presets/README.md for details.
+
+The following variables are injected into every script's execution context:
 
     font_path   — absolute path to the loaded font file
     WIDTH       — canvas width in pixels
     HEIGHT      — canvas height in pixels
-    input_text  — value from the optional text input
+    input_text  — value from the optional text input (string, may be empty)
 
-All drawbot-skia functions (font, text, textBox, rect, fill, etc.) are
-also available as globals, matching the DrawBot scripting API.
+All drawbot-skia functions are also available as globals.
 """
 
 from __future__ import annotations
 
 import os
+import re
+import sys
 import tempfile
 
 from PIL import Image
@@ -23,98 +27,39 @@ from PIL import Image
 from .render import _pil_to_tensor, _resolve_font
 
 # ---------------------------------------------------------------------------
-# Built-in preset scripts
+# Preset loader
 
-PRESETS: dict[str, str] = {}
+_PRESETS_DIR = os.path.join(os.path.dirname(__file__), "drawbot_presets")
 
-PRESETS["specimen"] = """\
-newPage(WIDTH, HEIGHT)
 
-# Dark background
-fill(0.1)
-rect(0, 0, WIDTH, HEIGHT)
+def _name_from_filename(filename: str) -> str:
+    """'02_waterfall.py' → 'Waterfall',  'my_kern_pairs.py' → 'My Kern Pairs'"""
+    stem = os.path.splitext(filename)[0]
+    stem = re.sub(r"^\d+_", "", stem)   # strip leading numeric prefix
+    return stem.replace("_", " ").title()
 
-# Alphabet rows, auto-fitted to fill the canvas
-lines = [
-    "ABCDEFGHIJKLM",
-    "NOPQRSTUVWXYZ",
-    "abcdefghijklm",
-    "nopqrstuvwxyz",
-    "0123456789",
-]
-padding = HEIGHT * 0.05
-size = (HEIGHT - padding * 2) / (len(lines) * 1.25)
-font(font_path, size)
-fill(1)
-for i, line in enumerate(lines):
-    text(line, (WIDTH / 2, HEIGHT - padding - size * (i + 1)), align="center")
-"""
 
-PRESETS["waterfall"] = """\
-newPage(WIDTH, HEIGHT)
+def load_presets() -> dict[str, str]:
+    """
+    Scan drawbot_presets/ and return {display_name: script_source} in
+    alphabetical filename order.
+    """
+    presets: dict[str, str] = {}
+    if not os.path.isdir(_PRESETS_DIR):
+        return presets
+    for filename in sorted(os.listdir(_PRESETS_DIR)):
+        if not filename.endswith(".py") or filename == "helpers.py":
+            continue
+        path = os.path.join(_PRESETS_DIR, filename)
+        try:
+            with open(path, encoding="utf-8") as f:
+                source = f.read()
+            name = _name_from_filename(filename)
+            presets[name] = source
+        except OSError:
+            pass
+    return presets
 
-fill(0.1)
-rect(0, 0, WIDTH, HEIGHT)
-
-sample = input_text or "The quick brown fox"
-margin = WIDTH * 0.04
-y = HEIGHT - margin
-fill(1)
-for size in [96, 72, 60, 48, 36, 28, 24, 18, 14, 12]:
-    if y < margin:
-        break
-    font(font_path, size)
-    text(sample, (margin, y))
-    y -= size * 1.4
-"""
-
-PRESETS["glyph"] = """\
-newPage(WIDTH, HEIGHT)
-
-fill(0.1)
-rect(0, 0, WIDTH, HEIGHT)
-
-# Set input_text to the character or glyph name you want to display
-font(font_path, HEIGHT * 0.75)
-fill(1)
-text(input_text or "A", (WIDTH / 2, HEIGHT * 0.15), align="center")
-"""
-
-PRESETS["pangram"] = """\
-newPage(WIDTH, HEIGHT)
-
-fill(0.1)
-rect(0, 0, WIDTH, HEIGHT)
-
-margin = WIDTH * 0.06
-font(font_path, HEIGHT * 0.075)
-fill(1)
-textBox(
-    input_text or "The quick brown fox jumps over the lazy dog.",
-    (margin, margin, WIDTH - margin * 2, HEIGHT - margin * 2),
-)
-"""
-
-PRESETS["custom"] = """\
-# Write any DrawBot script here, or wire a Text node to the custom_script input.
-#
-# Available variables:
-#   font_path   — absolute path to the loaded font
-#   WIDTH       — canvas width
-#   HEIGHT      — canvas height
-#   input_text  — value from the text input field
-#
-# All DrawBot functions are available as globals: font(), text(), fill(), etc.
-
-newPage(WIDTH, HEIGHT)
-
-fill(0.1)
-rect(0, 0, WIDTH, HEIGHT)
-
-font(font_path, 80)
-fill(1)
-text(input_text or "Aa", (WIDTH / 2, HEIGHT / 2 - 40), align="center")
-"""
 
 # ---------------------------------------------------------------------------
 
@@ -123,31 +68,26 @@ class DrawBotNode:
     """
     Render a type specimen using DrawBot (drawbot-skia).
 
-    Pick a preset from the dropdown for common specimen types, or select
-    "custom" and write your own DrawBot script in the custom_script field.
-    You can also wire a Text node to custom_script for external script files.
+    Pick a preset from the dropdown, or add your own script to
+    nodes/drawbot_presets/ — any .py file there appears as a preset.
     """
 
     @classmethod
     def INPUT_TYPES(cls):
+        presets = load_presets()
+        preset_names = list(presets.keys()) or ["(no presets found)"]
         return {
             "required": {
                 "font":          ("FONT",),
-                "preset":        (list(PRESETS.keys()), {}),
-                "canvas_width":  ("INT", {"default": 1200, "min": 64, "max": 4096, "step": 8}),
-                "canvas_height": ("INT", {"default": 800,  "min": 64, "max": 4096, "step": 8}),
+                "preset":        (preset_names, {}),
+                "canvas_width":  ("INT", {"default": 2048, "min": 64, "max": 8192, "step": 8}),
+                "canvas_height": ("INT", {"default": 2048, "min": 64, "max": 8192, "step": 8}),
             },
             "optional": {
-                # input_text feeds into scripts as the `input_text` variable.
-                # Used by: waterfall (sample string), glyph (character), pangram (body text).
-                "input_text": ("STRING", {"default": ""}),
-                # custom_script is only used when preset == "custom".
-                # Shows as an editable text area; right-click → "Convert to input"
-                # to wire a Text node instead.
-                "custom_script": ("STRING", {
-                    "multiline": True,
-                    "default":   PRESETS["custom"],
-                }),
+                "input_text":      ("STRING", {"default": ""}),
+                # Holds the in-editor script. Populated by the JS CodeMirror
+                # editor; if non-empty, takes precedence over the preset file.
+                "script_override": ("STRING", {"multiline": True, "default": ""}),
             },
         }
 
@@ -163,7 +103,7 @@ class DrawBotNode:
         canvas_width: int,
         canvas_height: int,
         input_text: str = "",
-        custom_script: str = "",
+        script_override: str = "",
     ):
         try:
             import drawbot_skia.drawbot as db
@@ -173,10 +113,27 @@ class DrawBotNode:
                 "Run: pip install drawbot-skia"
             )
 
-        font_path = _resolve_font(font)
-        script = custom_script if preset == "custom" else PRESETS[preset]
+        presets = load_presets()
 
-        # Build the execution namespace: context variables + all drawbot functions
+        # Use the in-editor script when the user has edited it; fall back to
+        # the preset file on disk.
+        override = script_override.strip() if script_override else ""
+        if override:
+            script = override
+        else:
+            # Case-insensitive fallback so saved workflows survive renames.
+            if preset not in presets:
+                _lower = {k.lower(): k for k in presets}
+                preset = _lower.get(preset.lower(), preset)
+            if preset not in presets:
+                raise ValueError(
+                    f"Preset {preset!r} not found. "
+                    f"Available: {list(presets)}"
+                )
+            script = presets[preset]
+
+        font_path = _resolve_font(font)
+
         namespace: dict = {
             "font_path":  font_path,
             "WIDTH":      canvas_width,
@@ -187,6 +144,10 @@ class DrawBotNode:
             if not name.startswith("_"):
                 namespace[name] = getattr(db, name)
 
+        # Add presets dir to sys.path so scripts can use `from helpers import *`
+        if _PRESETS_DIR not in sys.path:
+            sys.path.insert(0, _PRESETS_DIR)
+
         db.newDrawing()
         try:
             exec(script, namespace)  # noqa: S102
@@ -194,11 +155,9 @@ class DrawBotNode:
             db.endDrawing()
             raise RuntimeError(f"DrawBot script error: {exc}") from exc
 
-        # Save to a temp file (saveImage only accepts file paths, not BytesIO)
         tmp = tempfile.mktemp(suffix=".png")
         try:
             db.saveImage(tmp)
-            # drawbot-skia may suffix the filename for multi-page output
             path = tmp if os.path.exists(tmp) else tmp.replace(".png", "_1.png")
             img = Image.open(path).convert("RGB")
         finally:
