@@ -2,6 +2,8 @@
 
 A font editing and rendering extension for [ComfyUI](https://github.com/comfyanonymous/ComfyUI). Treat fonts as a first-class data type in your AI image workflows — load, edit, render, and fork font sources within the node graph.
 
+A **DrawBot node** is included for rendering high-quality type specimens. Scripts are written in Python using the [DrawBot](https://www.drawbot.com/) API — a scripting tool widely used by type designers for generating font proofs and specimen graphics. ComfyFont uses [drawbot-skia](https://github.com/typemytype/drawbot-skia) under the hood, so the DrawBot node works on macOS, Linux, and Windows without requiring the macOS DrawBot.app.
+
 <img width="1920" height="1080" alt="Image" src="https://github.com/user-attachments/assets/0e7452f6-164e-415e-a811-922a2617cce3" />
 
 ---

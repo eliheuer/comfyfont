@@ -20,10 +20,18 @@ def _pil_to_tensor(img: Image.Image) -> torch.Tensor:
 def _resolve_font(font: str) -> str:
     """Resolve a FONT value (absolute workspace path) to a renderable TTF/OTF path."""
     if os.path.isdir(font):
+        # UFO directory → compile to TTF if needed
         ttf = os.path.splitext(font)[0] + ".ttf"
         if not os.path.isfile(ttf):
             from ..core.compile import compile_ufo_to_ttf
             ttf = compile_ufo_to_ttf(font)
+        return ttf
+    if font.endswith(".designspace") and os.path.isfile(font):
+        # Designspace → compile to variable TTF if needed
+        ttf = os.path.splitext(font)[0] + ".ttf"
+        if not os.path.isfile(ttf):
+            from ..core.compile import compile_designspace_to_ttf
+            ttf = compile_designspace_to_ttf(font)
         return ttf
     if os.path.isfile(font):
         return font

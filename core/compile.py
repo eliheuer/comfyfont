@@ -9,6 +9,21 @@ import shutil
 log = logging.getLogger(__name__)
 
 
+def compile_designspace_to_ttf(ds_path: str) -> str:
+    """Compile a .designspace to a variable TTF. Returns the TTF path."""
+    from fontTools.designspaceLib import DesignSpaceDocument
+    import ufo2ft
+    import ufoLib2
+
+    ttf_path = os.path.splitext(ds_path)[0] + ".ttf"
+    ds = DesignSpaceDocument.fromfile(ds_path)
+    ds.loadSourceFonts(ufoLib2.Font.open)
+    tt = ufo2ft.compileVariableTTF(ds)
+    tt.save(ttf_path)
+    log.info("Compiled %s → %s", ds_path, ttf_path)
+    return ttf_path
+
+
 def compile_ufo_to_ttf(ufo_path: str) -> str:
     """Compile a UFO to a TrueType-flavored TTF. Returns the TTF path."""
     import ufo2ft

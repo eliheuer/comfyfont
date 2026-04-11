@@ -43,29 +43,23 @@ def grid(margin, step=None, color=(1, 0, 0), weight=2):
     w = _db.width()
     h = _db.height()
 
-    _db.save()
-    _db.stroke(*color)
-    _db.strokeWidth(weight)
-    _db.fill(None)
+    with _db.savedState():
+        _db.stroke(*color)
+        _db.strokeWidth(weight)
+        _db.fill(None)
 
-    # Outer margin rect
-    _db.rect(margin, margin, w - margin * 2, h - margin * 2)
+        # Outer margin rect
+        _db.rect(margin, margin, w - margin * 2, h - margin * 2)
 
-    # Vertical lines
-    x = margin
-    while x <= w - margin:
-        _db.line((x, margin), (x, h - margin))
-        x += step
+        # Vertical lines
+        x = margin
+        while x <= w - margin:
+            _db.line((x, margin), (x, h - margin))
+            x += step
 
-    # Horizontal lines
-    y = margin
-    while y <= h - margin:
-        _db.line((margin, y), (w - margin, y))
-        y += step
+        # Horizontal lines
+        y = margin
+        while y <= h - margin:
+            _db.line((margin, y), (w - margin, y))
+            y += step
 
-    # Bold centre lines
-    _db.strokeWidth(weight * 2)
-    _db.line((w / 2, margin), (w / 2, h - margin))
-    _db.line((margin, h / 2), (w - margin, h / 2))
-
-    _db.restore()
